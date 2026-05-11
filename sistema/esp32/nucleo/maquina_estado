@@ -1,0 +1,45 @@
+import time
+import network
+
+import comunicacion.conectar_wifi
+
+ESTADO_BOOT = 1
+ESTADO_ESPERA = 2
+ESTADO_OPERANDO = 3
+ESTADO_ERROR = 99
+
+class MaquinaEstado:
+    def __init__(self):
+        self.estado = ESTADO_BOOT
+        self.wlan = network.WLAN(network.STA_IF)
+        self.wlan.active(True)
+
+    def transicion(self, nuevo_estado):
+        print(f"Transicionando a {nuevo_estado}")
+        self.estado = nuevo_estado
+
+    def boot(self, ssid, contrasena):
+        if self.conectar_wifi(ssid, contrasena):
+            self.transicion(ESTADO_ESPERA)
+        else:
+            self.transicion(ESTADO_ERROR)
+
+    def espera(self, ssid, contrasena):
+        if not self.check_connection():
+            print("Conexión perdida en modo espera, reconectando...")
+            if self.conectar_wifi(ssid, contrasena):
+                self.transicion(ESTADO_ESPERA)
+            else:
+                self.transicion(ESTADO_ERROR)
+
+    def operando(self, ssid, contrasena):
+        if not self.check_connection():
+            print("Conexión perdida durante operación! Abortando...")
+            # TODO: Abortar operaciones
+            if self.conectar_wifi(ssid, contrasena):
+                self.transicion(ESTADO_OPERANDO)
+            else:
+                self.transicion(ESTADO_ERROR)
+
+    def error(self):
+        print("Estado de error")

@@ -1,15 +1,17 @@
-# =============================================================================
-# PROYECTO: Sistema de Riel Semicircular Fotográfico 180°
-# INTEGRANTES: 
-#              Macias Campos Ariadne Lizett 
-#              Soto Garnica Ari Adair 
-#              Lira Gamiño Luis Fernando 
+#
 
+import nucleo
 
-# DESCRIPCIÓN: Script principal del ESP32. Coordina el barrido fotográfico de
-#              180° usando la biblioteca de clases 'dispositivos.py'. La RPi
-#              envía el comando "FOTO_OK" por USB-Serial cuando termina de
-#              capturar; el ESP32 avanza al siguiente ángulo y confirma.
-#              Toda la interacción con el hardware ocurre exclusivamente
-#              a través de CajaSensores y CajaActuadores.
-# =============================================================================
+sm = MaquinaEstado()
+
+while True:
+    if sm.estado == nucleo.ESTADO_BOOT:
+        sm.handle_boot(SSID, PASSWORD)
+    elif sm.estado == nucleo.ESTADO_ESPERA:
+        sm.handle_standby(SSID, PASSWORD)
+    elif sm.estado == nucleo.ESTADO_OPERANDO:
+        sm.handle_operation(SSID, PASSWORD)
+    elif sm.estado == nucleo.ESTADO_ERROR:
+        sm.handle_error()
+
+    time.sleep(1)
