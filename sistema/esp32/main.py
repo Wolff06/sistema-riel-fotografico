@@ -6,12 +6,12 @@ sm = MaquinaEstado()
 
 while True:
     if sm.estado == nucleo.ESTADO_BOOT:
-        sm.handle_boot(SSID, PASSWORD)
+        sm.boot(SSID, PASSWORD)
     elif sm.estado == nucleo.ESTADO_ESPERA:
-        sm.handle_standby(SSID, PASSWORD)
+        sm.espera(SSID, PASSWORD)
     elif sm.estado == nucleo.ESTADO_OPERANDO:
-        sm.handle_operation(SSID, PASSWORD)
+        sm.operando(SSID, PASSWORD)
     elif sm.estado == nucleo.ESTADO_ERROR:
-        sm.handle_error()
+        sm.error()
 
     time.sleep(1)
