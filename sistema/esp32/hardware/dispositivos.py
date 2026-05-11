@@ -346,3 +346,4 @@ class CajaActuadores:
     def _leer_limite_der(self):
         """Lee directamente el pin del limit switch derecho (pull-up: 0 = activo)."""
         return Pin(PIN_LIMIT_DER, Pin.IN, Pin.PULL_UP).value() == 0
+
