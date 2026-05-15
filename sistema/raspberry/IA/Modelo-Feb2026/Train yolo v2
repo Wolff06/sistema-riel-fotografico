@@ -1,0 +1,54 @@
+from ultralytics import YOLO
+
+if __name__ == "__main__":
+    # ── Modelo ──────────────────────────────────────────────────────────────
+    # yolo11n es MEJOR para datasets pequeños (456 imgs).
+    # yolo11s tiene más parámetros y tiende a overfittear con pocos datos.
+    model = YOLO("yolo11n.pt")
+
+    # ── Ruta al dataset ──────────────────────────────────────────────────────
+    data = 'C:/Users/mlizz/OneDrive/Documentos/Escritorio/DetectorObjetos-CANMA/Dataset/datav3.yml'
+    print("Usando dataset:", data)
+
+    # ── Entrenamiento ────────────────────────────────────────────────────────
+    model.train(
+        data=data,
+
+        # Épocas: con 456 imgs, 150-200 es suficiente. EarlyStopping lo para antes si ya converge.
+        epochs=200,
+        patience=30,          # Para el entrenamiento si no mejora en 30 épocas consecutivas
+
+        imgsz=640,            # Tamaño estándar de YOLO
+        batch=8,              # Con datasets pequeños, batch chico generaliza mejor
+
+        # ── Augmentación (clave para pocos datos) ───────────────────────────
+        hsv_h=0.015,          # Variación de tono (Hue)
+        hsv_s=0.7,            # Variación de saturación
+        hsv_v=0.4,            # Variación de brillo
+        degrees=10,           # Rotación aleatoria ±10°
+        translate=0.1,        # Desplazamiento aleatorio
+        scale=0.5,            # Zoom aleatorio
+        fliplr=0.5,           # Voltear horizontalmente (50% de las veces)
+        flipud=0.0,           # No voltear verticalmente (imágenes médicas = orientación importa)
+        mosaic=1.0,           # Combina 4 imágenes en 1 (muy útil con pocos datos)
+        mixup=0.1,            # Mezcla suave de 2 imágenes
+        copy_paste=0.0,       # Desactivado (requiere segmentación)
+
+        # ── Optimizador ─────────────────────────────────────────────────────
+        optimizer='AdamW',    # AdamW generaliza mejor que SGD en datasets pequeños
+        lr0=0.001,            # Learning rate inicial
+        lrf=0.01,             # Factor de decaimiento del LR al final
+        weight_decay=0.0005,  # Regularización L2 para evitar overfitting
+
+        # ── Extras ──────────────────────────────────────────────────────────
+        dropout=0.2,          # Dropout en el clasificador
+        val=True,             # Validar durante entrenamiento
+        save_period=10,       # Guardar checkpoint cada 10 épocas
+        plots=True,           # Genera gráficas de métricas al final
+        verbose=True,
+        project='runs/cancer',
+        name='train_v1',
+    )
+
+    print("\n Entrenamiento terminado.")
+    print("   Modelo guardado en: runs/cancer/train_v1/weights/best.pt")

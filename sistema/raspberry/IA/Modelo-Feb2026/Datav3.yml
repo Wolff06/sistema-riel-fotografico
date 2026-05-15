@@ -1,0 +1,5 @@
+train: 'C:/Users/mlizz/OneDrive/Documentos/Escritorio/DetectorObjetos-CANMA/Dataset/images/train'
+val:   'C:/Users/mlizz/OneDrive/Documentos/Escritorio/DetectorObjetos-CANMA/Dataset/images/validation'
+
+nc: 3
+names: ['Seno Herido', 'Seno Ileso', 'Falso Positivo']
