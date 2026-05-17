@@ -3,11 +3,9 @@
 import network
 import time
 
-SSID = "RaspberryPi_SSID"
-PASSWORD = "RaspberryPi_Password"
-
 def conectar_wifi(ssid, password, intentos=5, delay=2):
     wlan = network.WLAN(network.STA_IF)
+    wlan.active(False)
     wlan.active(True)
     intento = 0
     while not wlan.isconnected() and intento < intentos:

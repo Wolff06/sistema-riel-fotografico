@@ -6,7 +6,7 @@ import utime
 ultima = utime.ticks_ms()
 intervalo = 50
 
-sm = MaquinaEstado()
+sm = nucleo.MaquinaEstado()
 
 while True:
     actual = utime.ticks_ms()
@@ -15,10 +15,10 @@ while True:
         ultima = actual
 
         if sm.estado == nucleo.ESTADO_BOOT:
-            sm.boot(SSID, PASSWORD)
+            sm.boot()
         elif sm.estado == nucleo.ESTADO_ESPERA:
-            sm.espera(SSID, PASSWORD)
+            sm.espera()
         elif sm.estado == nucleo.ESTADO_OPERANDO:
-            sm.operando(SSID, PASSWORD)
+            sm.operando()
         elif sm.estado == nucleo.ESTADO_ERROR:
             sm.error()

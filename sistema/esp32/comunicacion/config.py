@@ -1,0 +1,9 @@
+# -- PARÁMETROS WIFI
+SSID = "RaspberryLAN"
+CLAVE = "charizard"
+
+# -- PARÁMETROS MQTT
+SERVIDOR_MQTT = "192.168.4.1"
+PUERTO_MQTT    = 1884
+USUARIO_MQTT   = 'admin'
+CLAVE_MQTT     = '123'
