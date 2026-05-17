@@ -21,9 +21,9 @@ class MaquinaEstado:
         if comms.conectar_wifi(comms.config.SSID, comms.config.CLAVE):
 
             # REALIZAMOS LA CONEXIÓN AL BROKER DE MOSQUITTO
-            #mqttBroker = MQTTLink(comms.config.SERVIDOR_MQTT, 
-            #comms.config.PUERTO_MQTT, comms.config.USUARIO_MQTT, comms.config.CLAVE_MQTT)
-
+            mqttBroker = comms.MQTTLink(comms.config.SERVIDOR_MQTT, 
+            comms.config.PUERTO_MQTT, comms.config.USUARIO_MQTT, comms.config.CLAVE_MQTT)
+            mqttBroker.establecer_conexion_mqtt()
             # INSTANCIAMOS LAS CLASES DE CONTROL DE HARDWARE (HAL)
             sensores = hardware.CajaSensores()
             actuadores = hardware.CajaSensores()

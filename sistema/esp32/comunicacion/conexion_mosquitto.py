@@ -13,14 +13,14 @@ class MQTTLink:
         self.conectado = False
         self.cliente = None
 
-    def establecer_conexion_mqtt():
+    def establecer_conexion_mqtt(self):
         """
         Parámetros: ninguno.
         Acción:     Cierra cualquier sesión MQTT previa y abre una nueva
                     conexión con el broker configurado.
         Retorna:    None.
         """
-        cerrar_conexion_mqtt()
+        self.cerrar_conexion_mqtt()
         self.cliente = MQTTClient(
             self.id,
             self.servidor,
@@ -29,10 +29,10 @@ class MQTTLink:
             self.contrasena,
             keepalive=60    
         )
-        cliente.connect()
+        self.cliente.connect()
         self.conectado = True
 
-    def cerrar_conexion_mqtt():
+    def cerrar_conexion_mqtt(self):
         """
         Parámetros: ninguno.
         Acción:     Desconecta al cliente MQTT si hay una sesión activa
@@ -40,5 +40,5 @@ class MQTTLink:
         Retorna:    None.
         """
         if self.cliente is not None:
-            cliente.disconnect()
+            self.cliente.disconnect()
         self.conectado = False
