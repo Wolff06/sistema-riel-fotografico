@@ -13,8 +13,9 @@
 #              llamar directamente a machine.Pin o machine.PWM.
 # =============================================================================
 
-from machine import Pin, PWM
+from machine import Pin, PWM, time_pulse_us
 import time
+import utime
 
 
 # =============================================================================
@@ -22,36 +23,17 @@ import time
 # =============================================================================
 
 # Sensores
-PIN_PIR           = 34   # GPIO34 — sensor PIR (solo entrada, sin pull)
-PIN_LIMIT_IZQ     = 35   # GPIO35 — limit switch extremo izquierdo (solo entrada)
-PIN_LIMIT_DER     = 32   # GPIO32 — limit switch extremo derecho
+PIN_PIR           = 33   # GPIO34 — sensor PIR (solo entrada, sin pull)
+PIN_ULTRASONICO_TRIG = 25
+PIN_ULTRASONICO_ECHO = 26
 
-# Motor NEMA 17 vía TMC2208 (modo STEP/DIR standalone)
-PIN_STEP          = 26   # GPIO26 — pulsos de paso
-PIN_DIR           = 27   # GPIO27 — dirección (HIGH = derecha, LOW = izquierda)
-PIN_ENABLE        = 14   # GPIO14 — habilitar driver (LOW = activo, HIGH = apagado)
+ULTRASONICO_TIEMPO_ESPERA = 150 # En milisegundos
 
 # Actuadores de señalización
-PIN_LED_ESTADO    = 2    # GPIO2  — LED integrado o externo (estado del sistema)
-PIN_BUZZER        = 4    # GPIO4  — buzzer pasivo para alertas sonoras
-
-# Parámetros mecánicos del sistema
-PASOS_POR_REV     = 200  # pasos por revolución del NEMA 17 (1.8° por paso)
-MICROPASOS        = 8    # microstepping configurado en TMC2208 (MS1=HIGH, MS2=LOW)
-DIENTES_POLEA     = 20   # dientes de la polea GT2
-PASO_BANDA_MM     = 2    # paso de la banda GT2 en milímetros
-RADIO_RIEL_MM     = 370  # radio del riel semicircular en milímetros (~37 cm)
-
-# Cálculo: mm por paso del sistema
-# Circunferencia polea = dientes × paso_banda = 20 × 2 = 40 mm por vuelta
-# Pasos reales por vuelta = pasos_rev × micropasos = 200 × 8 = 1600
-# MM por paso = 40 / 1600 = 0.025 mm/paso
-MM_POR_PASO       = (DIENTES_POLEA * PASO_BANDA_MM) / (PASOS_POR_REV * MICROPASOS)
-
-# Velocidad por defecto (microsegundos entre pulsos STEP — menor = más rápido)
-VELOCIDAD_NORMAL  = 600   # µs — velocidad de barrido normal
-VELOCIDAD_LENTA   = 1200  # µs — velocidad para acercarse a limit switch
-
+PIN_LED_ESTADO_ROJO    = 18    # GPIO2  — LED integrado o externo (estado del sistema)
+PIN_LED_ESTADO_AMARILLO    = 19    # GPIO2  — LED integrado o externo (estado del sistema)
+PIN_LED_ESTADO_AZUL    = 21    # GPIO2  — LED integrado o externo (estado del sistema)
+PIN_BUZZER        = 27    # GPIO4  — buzzer pasivo para alertas sonoras
 
 # =============================================================================
 # CLASE: CajaSensores
@@ -62,8 +44,6 @@ class CajaSensores:
     """
     Clase que encapsula la lectura e interpretación de los 3 sensores del sistema:
       1. Sensor PIR      — detecta presencia humana por calor infrarrojo
-      2. Limit switch izquierdo — detecta fin de carrera lado izquierdo
-      3. Limit switch derecho   — detecta fin de carrera lado derecho
     Implementa promedio móvil en el PIR para evitar lecturas falsas.
     """
 
@@ -74,11 +54,16 @@ class CajaSensores:
         """
         Inicializa los pines de todos los sensores.
         PIR: solo entrada, sin resistencia pull (GPIO34/35 son input-only en ESP32).
-        Limit switches: entrada con pull-up interno; el switch conecta a GND.
+        
         """
         self._pir          = Pin(PIN_PIR,       Pin.IN)
-        self._limit_izq    = Pin(PIN_LIMIT_IZQ, Pin.IN)
-        self._limit_der    = Pin(PIN_LIMIT_DER, Pin.IN, Pin.PULL_UP)
+
+        self._ultrasonico_trig = Pin(PIN_ULTRASONICO_TRIG, Pin.OUT, pull=None)
+        self._ultrasonico_trig.value(0)
+        self._ultrasonico_echo = Pin(PIN_ULTRASONICO_ECHO, Pin.IN, pull=None)
+        self._ultrasonico_espera = ULTRASONICO_TIEMPO_ESPERA
+        self._ultrasonico_ultima_medida = 0
+        self._ultrasonico_ultima_distancia = None
 
         # Historial de lecturas PIR para promedio móvil
         self._historial_pir = [0] * self.MUESTRAS_PIR
@@ -101,25 +86,37 @@ class CajaSensores:
         return votos_positivos >= (self.MUESTRAS_PIR // 2 + 1)
 
     # -------------------------------------------------------------------------
-    def obtener_limite_izquierdo(self):
-        """
-        Parámetros: ninguno.
-        Hace: lee el estado del limit switch del extremo izquierdo del riel.
-              El switch está conectado a GND, con pull-up interno; al activarse
-              el pin baja a 0.
-        Devuelve: True si el carrito ha llegado al extremo izquierdo, False si no.
-        """
-        # Pull-up: 0 = presionado (límite alcanzado), 1 = libre
-        return self._limit_izq.value() == 0
 
-    # -------------------------------------------------------------------------
-    def obtener_limite_derecho(self):
-        """
-        Parámetros: ninguno.
-        Hace: lee el estado del limit switch del extremo derecho del riel.
-        Devuelve: True si el carrito ha llegado al extremo derecho, False si no.
-        """
-        return self._limit_der.value() == 0
+    def leer_distancia(self):
+        actual = utime.ticks_ms()
+        if utime.ticks_diff(actual, self._ultrasonico_ultima_medida) < self._ultrasonico_espera:
+            # Regresar última medida
+            print("aun no")
+            return self._ultrasonico_ultima_distancia
+
+        # Activar disparador
+        self._ultrasonico_trig.value(0)
+        utime.sleep_us(5)
+        self._ultrasonico_trig.value(1)
+        utime.sleep_us(10)
+        self._ultrasonico_trig.value(0)
+
+        try:
+            # Medir duración del pulso de Echo
+            duracion = time_pulse_us(self._ultrasonico_echo, 1, 30000)  # timeout 30ms
+            if duracion < 0:
+                RANGO_MAXIMO_EN_CM = const(500)
+                duracion = int(RANGO_MAXIMO_EN_CM * 29.1)
+            # Convertir a distancia en CM
+            distancia = (duracion / 2) / 29.1
+        except OSError:
+            # Timeout o medición invalida
+            distancia = None
+
+        self._ultrasonico_ultima_medida = actual
+        self._ultrasonico_ultima_distancia = distancia
+        return distancia
+
 
     # -------------------------------------------------------------------------
     def obtener_resumen(self):
@@ -131,8 +128,7 @@ class CajaSensores:
         """
         return {
             "presencia"   : self.obtener_presencia(),
-            "limite_izq"  : self.obtener_limite_izquierdo(),
-            "limite_der"  : self.obtener_limite_derecho(),
+            "distancia"    : self.leer_distancia()
         }
 
 
@@ -144,10 +140,9 @@ class CajaSensores:
 class CajaActuadores:
     """
     Clase que encapsula el control de los 3 actuadores del sistema:
-      1. Motor NEMA 17 (vía TMC2208) — mueve el carrito a lo largo del riel
-      2. LED de estado               — indica el estado del sistema visualmente
-      3. Buzzer pasivo               — emite señales sonoras a la persona fotografiada
-    Expone métodos de alto nivel. El main.py nunca accede a machine.Pin directamente.
+      1. LEDs de estado               — indica el estado del sistema visualmente
+      2. Buzzer pasivo               — emite señales sonoras a la persona fotografiada
+      3. Servomotores
     """
 
     # Frecuencia del buzzer en Hz para cada tipo de señal
@@ -156,113 +151,60 @@ class CajaActuadores:
     FREQ_FIN      = 1500  # tono corto: sesión terminada
 
     def __init__(self):
-        """
-        Inicializa los pines del motor (STEP, DIR, ENABLE), LED y buzzer.
-        El driver TMC2208 arranca deshabilitado (ENABLE en HIGH) para
-        que el motor no consuma corriente ni se caliente en reposo.
-        """
-        self._paso      = Pin(PIN_STEP,   Pin.OUT, value=0)
-        self._direccion = Pin(PIN_DIR,    Pin.OUT, value=0)
-        self._habilitar = Pin(PIN_ENABLE, Pin.OUT, value=1)  # HIGH = apagado al inicio
 
-        self._led    = Pin(PIN_LED_ESTADO, Pin.OUT, value=0)
+        self._led_rojo    = Pin(PIN_LED_ESTADO_ROJO, Pin.OUT, value=0)
+        self._led_amarillo    = Pin(PIN_LED_ESTADO_AMARILLO, Pin.OUT, value=0)
+        self._led_azul    = Pin(PIN_LED_ESTADO_AZUL, Pin.OUT, value=0)
         self._buzzer = PWM(Pin(PIN_BUZZER), freq=1000, duty=0)  # inicia silencioso
-
-        # Posición actual en pasos (0 = extremo izquierdo, inicio del riel)
-        self._posicion_pasos = 0
 
     # -------------------------------------------------------------------------
     # MOTOR — movimiento
     # -------------------------------------------------------------------------
 
-    def mover_angulo(self, angulo_grados, velocidad_us=VELOCIDAD_NORMAL):
-        """
-        Parámetros:
-          angulo_grados (float) — grados a mover; positivo = derecha, negativo = izquierda.
-          velocidad_us  (int)   — microsegundos entre pulsos STEP (defecto 600 µs).
-        Hace: convierte el ángulo en milímetros de arco, luego en pasos del motor,
-              configura la dirección y genera los pulsos STEP necesarios.
-              Detiene el movimiento si se activa algún limit switch.
-        Devuelve: pasos efectivamente ejecutados (puede ser menor si hubo límite).
-        """
-        # Arco en mm = radio × ángulo en radianes
-        import math
-        arco_mm   = RADIO_RIEL_MM * abs(angulo_grados) * math.pi / 180.0
-        num_pasos = int(arco_mm / MM_POR_PASO)
-
-        # Dirección: HIGH = derecha (ángulos positivos)
-        self._direccion.value(1 if angulo_grados >= 0 else 0)
-        self._habilitar.value(0)  # activar driver
-
-        pasos_dados = 0
-        for _ in range(num_pasos):
-            # Verificar límites antes de cada paso
-            if angulo_grados > 0 and self._leer_limite_der():
-                break
-            if angulo_grados < 0 and self._leer_limite_izq():
-                break
-
-            self._paso.value(1)
-            time.sleep_us(velocidad_us)
-            self._paso.value(0)
-            time.sleep_us(velocidad_us)
-            pasos_dados += 1
-
-        delta = pasos_dados if angulo_grados >= 0 else -pasos_dados
-        self._posicion_pasos += delta
-        return pasos_dados
-
-    def ir_a_inicio(self):
-        """
-        Parámetros: ninguno.
-        Hace: mueve el carrito hacia la izquierda a velocidad lenta hasta que
-              el limit switch izquierdo se activa (homing). Restablece la
-              posición interna a cero.
-        Devuelve: nada.
-        """
-        self._direccion.value(0)  # izquierda
-        self._habilitar.value(0)
-
-        while not self._leer_limite_izq():
-            self._paso.value(1)
-            time.sleep_us(VELOCIDAD_LENTA)
-            self._paso.value(0)
-            time.sleep_us(VELOCIDAD_LENTA)
-
-        self._posicion_pasos = 0
-
-    def obtener_posicion_grados(self):
-        """
-        Parámetros: ninguno.
-        Hace: convierte la posición interna en pasos a grados sobre el arco.
-        Devuelve: float con los grados actuales (0° = extremo izquierdo, 180° = derecho).
-        """
-        import math
-        arco_mm = self._posicion_pasos * MM_POR_PASO
-        grados  = (arco_mm / RADIO_RIEL_MM) * (180.0 / math.pi)
-        return round(grados, 2)
 
     # -------------------------------------------------------------------------
     # LED — señalización visual
     # -------------------------------------------------------------------------
 
-    def encender_led(self):
+    def encender_led(self,led):
         """
-        Parámetros: ninguno.
+        Parámetros: nombre del led.
         Hace: enciende el LED de estado (sistema activo / grabando).
         Devuelve: nada.
         """
-        self._led.value(1)
+        if led == "ROJO": 
+            self._led_rojo.value(1)
+        elif led == "AMARILLO":
+            self._led_amarillo.value(1)
+        elif led == "AZUL":
+            self._led_azul.value(1)
 
-    def apagar_led(self):
+    def apagar_led(self,led):
         """
         Parámetros: ninguno.
         Hace: apaga el LED de estado.
         Devuelve: nada.
         """
-        self._led.value(0)
+        if led == "ROJO": 
+            self._led_rojo.value(0)
+        elif led == "AMARILLO":
+            self._led_amarillo.value(0)
+        elif led == "AZUL":
+            self._led_azul.value(0)
+    
 
-    def parpadear_led(self, veces=3, intervalo_ms=200):
+    def apagar_leds(self):
+        """
+        Parámetros: ninguno.
+        Hace: apaga los LEDs de estado.
+        Devuelve: nada.
+        """
+        self._led_rojo.value(0)
+        self._led_amarillo.value(0)
+        self._led_azul.value(0)
+            
+
+    def parpadear_led(self, led, veces=3, intervalo_ms=200):
         """
         Parámetros:
           veces        (int) — cantidad de parpadeos (defecto 3).
@@ -271,9 +213,9 @@ class CajaActuadores:
         Devuelve: nada.
         """
         for _ in range(veces):
-            self._led.value(1)
+            self.encender_led(led)
             time.sleep_ms(intervalo_ms)
-            self._led.value(0)
+            self.apagar_led(led)
             time.sleep_ms(intervalo_ms)
 
     # -------------------------------------------------------------------------
@@ -330,20 +272,7 @@ class CajaActuadores:
               Debe llamarse ante cualquier error, interrupción o al finalizar.
         Devuelve: nada.
         """
-        self._habilitar.value(1)   # deshabilitar driver — motor sin torque
-        self._paso.value(0)        # asegurar STEP en bajo
-        self._led.value(0)         # apagar LED
+        self.apagar_leds()
         self._buzzer.duty(0)       # silenciar buzzer
 
-    # -------------------------------------------------------------------------
-    # MÉTODOS PRIVADOS — solo para uso interno de la clase
-    # -------------------------------------------------------------------------
-
-    def _leer_limite_izq(self):
-        """Lee directamente el pin del limit switch izquierdo (pull-up: 0 = activo)."""
-        return Pin(PIN_LIMIT_IZQ, Pin.IN).value() == 0
-
-    def _leer_limite_der(self):
-        """Lee directamente el pin del limit switch derecho (pull-up: 0 = activo)."""
-        return Pin(PIN_LIMIT_DER, Pin.IN, Pin.PULL_UP).value() == 0
 

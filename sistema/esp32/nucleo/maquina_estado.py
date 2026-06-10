@@ -12,6 +12,8 @@ ESTADO_ERROR = 99
 class MaquinaEstado:
     def __init__(self):
         self.estado = ESTADO_BOOT
+        self._actuadores = None
+        self._sensores = None
 
     def transicion(self, nuevo_estado):
         print(f"Transicionando a {nuevo_estado}")
@@ -25,9 +27,9 @@ class MaquinaEstado:
             comms.config.PUERTO_MQTT, comms.config.USUARIO_MQTT, comms.config.CLAVE_MQTT)
             mqttBroker.establecer_conexion_mqtt()
             # INSTANCIAMOS LAS CLASES DE CONTROL DE HARDWARE (HAL)
-            sensores = hardware.CajaSensores()
-            actuadores = hardware.CajaSensores()
-
+            self._sensores = hardware.CajaSensores()
+            self._actuadores = hardware.CajaActuadores()
+            self._actuadores.señal_lista()
             self.transicion(ESTADO_ESPERA)
         else:
             self.transicion(ESTADO_ERROR)
@@ -39,6 +41,14 @@ class MaquinaEstado:
                 self.transicion(ESTADO_ESPERA)
             else:
                 self.transicion(ESTADO_ERROR)
+        else:
+            distancia = self._sensores.leer_distancia()
+            print(distancia+" cm")
+            if distancia <= 35:
+                self._actuadores.señal_quieta()
+            elif distancia >= 85:
+                self._actuadores.señal_lista()
+
 
     def operando(self):
         if not comms.verificar_conexion():
