@@ -6,9 +6,9 @@
 
 
 # - INTREGANTES -
-Macias Campos Ariadne Lizett
-Soto Garnica Ari Adair
-Lira Gamiño Luis Fernando
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
 
 import cv2
 import imutils
