@@ -1,3 +1,15 @@
+# - OBJETIVO DEL CODIGO -
+# Gestionar los eventos de la interfaz gráfica del sistema, 
+# conectando los botones de la pantalla con las funciones 
+# de cámara, grabación, filtros de imagen, extracción de frames
+# y activación del clasificador de inteligencia artificial.
+
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+
+
 import cv2
 import imutils
 import os
