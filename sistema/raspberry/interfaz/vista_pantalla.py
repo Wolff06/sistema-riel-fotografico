@@ -1,3 +1,16 @@
+# - OBJETIVO DEL CODIGO -
+# Diseñar y configurar la pantalla principal del sistema, 
+# permitiendo al usuario controlar la cámara, aplicar filtros, 
+# iniciar o detener grabaciones, activar la IA, extraer frames 
+# y visualizar el video en tiempo real dentro de una interfaz 
+# gráfica adaptada a una resolución de 800x480.
+
+
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+
 #Importación de librerias
 import tkinter as tk
 from PIL import Image, ImageTk
