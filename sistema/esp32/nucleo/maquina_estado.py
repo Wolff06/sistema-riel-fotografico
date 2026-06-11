@@ -64,6 +64,9 @@ class MaquinaEstado:
             self.mqttBroker.establecer_conexion_mqtt(callback=mi_callback)
 
             self.mqttBroker.publicar(comms.T_SISTEMA_ESTADO,"Iniciando")
+            self.mqttBroker.publicar(comms.T_SENSOR_PIR,"false")
+            self.mqttBroker.publicar(comms.T_SENSOR_ULTRASONICO,"false")
+            
             self.mqttBroker.suscribir(comms.T_CMD_INICIAR_OP)
             self.mqttBroker.suscribir(comms.T_CMD_LED_ESTADO_AZUL)
 
@@ -100,6 +103,8 @@ class MaquinaEstado:
                 self.transicion(ESTADO_ERROR)
         else:
             self.mqttBroker.publicar(comms.T_SISTEMA_ESTADO,"Operando")
+            self.mqttBroker.publicar(comms.T_SENSOR_PIR,str(self._sensores.obtener_presencia()))
+            self.mqttBroker.publicar(comms.T_SENSOR_ULTRASONICO,str(self._sensores.leer_distancia()))
             self.mqttBroker.checar_mensajes()
             
 
