@@ -1,4 +1,4 @@
-
+import machine
 import ubinascii
 from umqtt.simple import MQTTClient
 
