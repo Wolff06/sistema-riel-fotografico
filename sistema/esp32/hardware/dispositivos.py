@@ -35,6 +35,10 @@ PIN_LED_ESTADO_AMARILLO    = 19    # GPIO2  — LED integrado o externo (estado 
 PIN_LED_ESTADO_AZUL    = 21    # GPIO2  — LED integrado o externo (estado del sistema)
 PIN_BUZZER        = 27    # GPIO4  — buzzer pasivo para alertas sonoras
 
+# Servomotores
+PIN_SERVO_BASE = 22
+PIN_SERVO_BRAZO = 23
+
 # =============================================================================
 # CLASE: CajaSensores
 # Gestiona todos los sensores de lectura del sistema.
@@ -156,10 +160,30 @@ class CajaActuadores:
         self._led_amarillo    = Pin(PIN_LED_ESTADO_AMARILLO, Pin.OUT, value=0)
         self._led_azul    = Pin(PIN_LED_ESTADO_AZUL, Pin.OUT, value=0)
         self._buzzer = PWM(Pin(PIN_BUZZER), freq=1000, duty=0)  # inicia silencioso
+        self._servo_base = PWM(Pin(PIN_SERVO_BASE),freq=50)
+        self._servo_brazo = PWM(Pin(PIN_SERVO_BRAZO),freq=50)
 
     # -------------------------------------------------------------------------
-    # MOTOR — movimiento
+    # SERVOMOTOR — movimiento
     # -------------------------------------------------------------------------
+
+    def mover_servo(self,angulo,servomotor):
+        """
+        Mueva el servo SG90 a un ángulo dado (0 – 180 °).
+        """
+        # Limitarlo a 180 grados
+        angle = max(0, min(180, angulo))
+    
+        # El SG90 espera un ancho de pulso de ~0,5 ms a 2,5 ms a 50 Hz
+        # En el ESP32, el ciclo de trabajo es de 0 a 1023 (resolución de 10 bits)
+        min_duty = 26    # ~0.5ms
+        max_duty = 123   # ~2.5ms
+        duty = int(min_duty + (max_duty - min_duty) * angulo / 180)
+    
+        if servomotor == "base":
+            self._servo_base.duty(duty)
+        elif servomotor == "brazo":
+            self._servo_brazo.duty(duty)
 
 
     # -------------------------------------------------------------------------
@@ -274,5 +298,6 @@ class CajaActuadores:
         """
         self.apagar_leds()
         self._buzzer.duty(0)       # silenciar buzzer
+
 
 
