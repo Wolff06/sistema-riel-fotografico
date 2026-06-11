@@ -630,6 +630,31 @@ class CajaActuadores:
             time.sleep_ms(100)
 
     # -------------------------------------------------------------------------
+    
+    def senal_lista(self):
+        """
+        Alias sin ñ para evitar problemas de codificación.
+        Hace lo mismo que señal_lista().
+        """
+        self.señal_lista()
+
+    # -------------------------------------------------------------------------
+    def senal_quieta(self):
+        """
+        Alias sin ñ para evitar problemas de codificación.
+        Hace lo mismo que señal_quieta().
+        """
+        self.señal_quieta()
+
+    # -------------------------------------------------------------------------
+    def senal_fin_sesion(self):
+        """
+        Alias sin ñ para evitar problemas de codificación.
+        Hace lo mismo que señal_fin_sesion().
+        """
+        self.señal_fin_sesion()
+        
+    # -------------------------------------------------------------------------
     def estado_seguro(self):
         """
         Parámetros:
