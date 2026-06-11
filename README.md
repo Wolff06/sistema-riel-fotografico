@@ -1,12 +1,12 @@
-# Garra Robótica con Cámara e IA para Apoyo en la Detección de Cáncer de Mama
+# CANMA — Garra Robótica con Cámara e IA para Apoyo en la Detección de Cáncer de Mama
 
 ## Descripción del proyecto
 
-Este proyecto consiste en el desarrollo de una **garra robótica controlada por ESP32**, equipada con una **cámara** y un sistema de **inteligencia artificial** orientado al análisis de imágenes para apoyar en la detección temprana de posibles indicios relacionados con cáncer de mama.
+CANMA es un prototipo académico de una garra robótica controlada con ESP32 y Raspberry Pi. El sistema integra sensores, actuadores, comunicación MQTT, interfaz gráfica e inteligencia artificial en servidor externo para apoyar el análisis visual de imágenes relacionadas con posibles indicios de cáncer de mama.
 
-El sistema integra hardware físico, control de servomotores, comunicación mediante MQTT y procesamiento de imágenes en un servidor Python. La ESP32 se encarga del control de movimiento de la garra, mientras que el servidor procesa la información recibida, administra la comunicación y ejecuta los módulos relacionados con IA.
+El prototipo utiliza una ESP32 con MicroPython para leer sensores y controlar actuadores físicos. La Raspberry Pi funciona como estación central: crea la red local, ejecuta Mosquitto como broker MQTT, muestra la interfaz gráfica y procesa datos recibidos desde el ESP32.
 
-> **Nota importante:** Este prototipo es de carácter académico y experimental. No sustituye el diagnóstico médico profesional ni debe utilizarse como herramienta clínica definitiva.
+> **Nota importante:** Este proyecto es académico y experimental. No sustituye diagnóstico médico profesional ni debe usarse como herramienta clínica definitiva.
 
 ---
 
@@ -20,347 +20,593 @@ El sistema integra hardware físico, control de servomotores, comunicación medi
 
 ## Objetivo general
 
-Diseñar e implementar un prototipo funcional de garra robótica con cámara, capaz de realizar movimientos controlados para posicionar el sistema de captura de imagen y enviar información a un servidor mediante MQTT, donde se integra un módulo de inteligencia artificial para el análisis de imágenes relacionadas con la detección de cáncer de mama.
+Diseñar e implementar un prototipo funcional de garra robótica con cámara, sensores y actuadores, capaz de comunicarse mediante MQTT con una Raspberry Pi para mostrar información en una interfaz gráfica, controlar el movimiento de la cámara/base, registrar eventos del sistema y preparar el flujo para el análisis de imágenes mediante inteligencia artificial en servidor externo.
 
 ---
 
-## Características principales
-
-* Control de movimiento mediante ESP32.
-* Movimiento de base de izquierda a derecha.
-* Movimiento vertical de la cámara mediante servomotores.
-* Captura de imágenes mediante cámara.
-* Comunicación MQTT entre ESP32, broker y servidor Python.
-* Arquitectura basada en HAL para separar la lógica del hardware.
-* Integración con módulo de inteligencia artificial.
-* Posibilidad de enviar estados, comandos y alertas del sistema.
-* Uso de LED y buzzer como indicadores físicos del estado del prototipo.
-
----
-
-## Arquitectura del sistema
+## Arquitectura general del sistema
 
 ```text
-┌─────────────────────────────────────────────────────────────────┐
-│                 ECOSISTEMA GENERAL DEL SISTEMA                  │
-│                                                                 │
-│  ┌────────────────┐      MQTT/TCP       ┌────────────────────┐  │
-│  │     ESP32      │ ◄────────────────► │ Broker Mosquitto   │  │
-│  │ mqtt_esp32.py  │                    │ Raspberry Pi / PC  │  │
-│  └───────┬────────┘                    └─────────┬──────────┘  │
-│          │                                       │              │
-│          │                                       │              │
-│  ┌───────▼────────┐                    ┌─────────▼──────────┐  │
-│  │  HAL Hardware  │                    │ servidor_python.py │  │
-│  │ dispositivos.py│                    │ IA + Control MQTT  │  │
-│  └───────┬────────┘                    └─────────┬──────────┘  │
-│          │                                       │              │
-│  ┌───────▼────────────────────┐          ┌───────▼──────────┐  │
-│  │ Hardware físico             │          │ Cámara / IA       │  │
-│  │ Servos · Joysticks · LED    │          │ Captura y análisis│  │
-│  │ Buzzer · Sensores           │          │ de imagen         │  │
-│  └─────────────────────────────┘          └──────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                           SISTEMA CANMA                              │
+│                                                                     │
+│  ┌─────────────────────┐       MQTT       ┌──────────────────────┐  │
+│  │        ESP32         │ ◄──────────────► │   Mosquitto Broker   │  │
+│  │    MicroPython       │                  │    Raspberry Pi      │  │
+│  └─────────┬───────────┘                  └──────────┬───────────┘  │
+│            │                                         │              │
+│            │                                         │              │
+│  ┌─────────▼───────────┐                  ┌──────────▼───────────┐  │
+│  │     HAL Hardware     │                  │     MQTT Bridge      │  │
+│  │   dispositivos.py    │                  │    mqtt_bridge.py    │  │
+│  └─────────┬───────────┘                  └──────────┬───────────┘  │
+│            │                                         │              │
+│  ┌─────────▼───────────┐                  ┌──────────▼───────────┐  │
+│  │  Sensores/Actuadores │                  │  Interfaz Tkinter    │  │
+│  │ PIR · Ultrasónico    │                  │ vista_pantalla.py    │  │
+│  │ Joystick · Servos    │                  └──────────┬───────────┘  │
+│  │ LED · Buzzer         │                             │              │
+│  └─────────────────────┘                  ┌──────────▼───────────┐  │
+│                                           │ IA / Firebase         │  │
+│                                           │ En integración        │  │
+│                                           └──────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Principio de encapsulamiento HAL
+## Tecnologías utilizadas
 
-El proyecto utiliza una arquitectura tipo **HAL** (*Hardware Abstraction Layer*) para separar la lógica principal del acceso directo al hardware.
+| Componente                | Tecnología                                  |
+| ------------------------- | ------------------------------------------- |
+| Microcontrolador          | ESP32 con MicroPython                       |
+| Broker MQTT               | Mosquitto en Raspberry Pi                   |
+| Comunicación              | MQTT                                        |
+| Interfaz gráfica          | Python + Tkinter                            |
+| Cliente MQTT en Raspberry | paho-mqtt                                   |
+| Procesamiento de imagen   | OpenCV / YOLO                               |
+| Base de datos             | Firebase, pendiente de integración completa |
+| Arquitectura de hardware  | HAL mediante `dispositivos.py`              |
 
-Esto significa que el módulo `mqtt_esp32.py` no debe acceder directamente a instrucciones como:
+---
 
-```python
-machine.Pin
-machine.PWM
-ADC
+## Estado actual del proyecto
+
+### Implementado
+
+* Estructura de carpetas separada para ESP32 y Raspberry.
+* HAL en ESP32 mediante `CajaSensores` y `CajaActuadores`.
+* Lectura de sensor PIR.
+* Lectura de sensor ultrasónico.
+* Lectura de joystick de base.
+* Control de servo base.
+* Control preparado para servo de brazo.
+* Control de LEDs y buzzer.
+* Máquina de estados en ESP32.
+* Tabla de tópicos MQTT con jerarquía `sistema/...`.
+* Comunicación MQTT base entre ESP32 y Mosquitto.
+* Interfaz gráfica para Raspberry adaptada a 800x480.
+* Botones ON/OFF en interfaz para cambiar el estado del ESP32.
+* Flechas en interfaz para solicitar movimiento de la base.
+* Bridge MQTT en Raspberry para recibir datos y publicar comandos.
+* Script para crear hotspot en Raspberry.
+
+### En integración
+
+* Conexión completa de la interfaz con datos reales MQTT.
+* Registro de eventos en Firebase.
+* Integración del resultado de IA con MQTT.
+* Almacenamiento histórico de sensores y alertas.
+* Flujo completo cámara → IA → MQTT → actuador → Firebase.
+
+---
+
+## Estructura actual recomendada del repositorio
+
+```text
+sistema-riel-fotografico/
+│
+├── README.md
+│
+└── sistema/
+    │
+    ├── esp32/
+    │   ├── main.py
+    │   │
+    │   ├── comunicacion/
+    │   │   ├── __init__.py
+    │   │   ├── config.py
+    │   │   ├── comunicacion.py
+    │   │   ├── conexion_wifi.py
+    │   │   └── conexion_mosquitto.py
+    │   │
+    │   ├── hardware/
+    │   │   ├── __init__.py
+    │   │   └── dispositivos.py
+    │   │
+    │   └── nucleo/
+    │       ├── __init__.py
+    │       └── maquina_estado.py
+    │
+    └── raspberry/
+        ├── main_interfaz_mqtt.py
+        │
+        ├── comunicacion/
+        │   ├── crear_hotspot.sh
+        │   ├── instalar_mosquitto.sh
+        │   ├── mqtt_bridge.py
+        │   └── README_MOSQUITTO.md
+        │
+        ├── interfaz/
+        │   ├── vista_pantalla.py
+        │   ├── modelo_pantalla.py
+        │   └── controlador_pantalla.py
+        │
+        └── IA/
+            └── Modelo-Feb2026/
+                └── Detector cancer.py
 ```
 
-En su lugar, toda la interacción con el hardware debe realizarse a través de clases como:
+---
+
+## Hardware utilizado
+
+| Componente                 | Función                                               |
+| -------------------------- | ----------------------------------------------------- |
+| ESP32                      | Control principal de sensores y actuadores            |
+| Raspberry Pi               | Broker MQTT, interfaz gráfica y procesamiento externo |
+| Sensor PIR                 | Detección de movimiento/presencia                     |
+| Sensor ultrasónico         | Medición de distancia aproximada                      |
+| Joystick                   | Control manual de la base                             |
+| Servomotor base            | Movimiento izquierda/derecha                          |
+| Servomotor brazo           | Movimiento vertical preparado                         |
+| LEDs rojo, amarillo y azul | Indicadores visuales de estado                        |
+| Buzzer                     | Indicador sonoro de alertas                           |
+| Cámara                     | Captura de imagen para análisis                       |
+| Fuente externa 5V          | Alimentación de servomotores                          |
+
+---
+
+## Conexiones principales del ESP32
+
+### Sensores
+
+| Dispositivo       | Pin ESP32 |
+| ----------------- | --------- |
+| PIR               | GPIO33    |
+| Ultrasónico TRIG  | GPIO25    |
+| Ultrasónico ECHO  | GPIO26    |
+| Joystick base VRx | GPIO35    |
+
+> Importante: si se usa un HC-SR04 común, el pin ECHO puede entregar 5V. Se recomienda usar divisor de voltaje antes de conectarlo al ESP32.
+
+### Actuadores
+
+| Dispositivo  | Pin ESP32 |
+| ------------ | --------- |
+| LED rojo     | GPIO18    |
+| LED amarillo | GPIO19    |
+| LED azul     | GPIO21    |
+| Buzzer       | GPIO27    |
+| Servo base   | GPIO14    |
+| Servo brazo  | GPIO23    |
+
+### Alimentación recomendada
+
+```text
+Servo rojo       → +5V fuente externa
+Servo café/negro → GND fuente externa
+GND fuente       → GND ESP32
+
+Joystick VCC     → 3V3 ESP32
+Joystick GND     → GND ESP32
+Joystick VRx     → GPIO35
+```
+
+No se recomienda alimentar servomotores directamente desde el pin 3V3 del ESP32.
+
+---
+
+## Principio de arquitectura HAL
+
+El proyecto utiliza una capa HAL en:
+
+```text
+sistema/esp32/hardware/dispositivos.py
+```
+
+La HAL centraliza el acceso al hardware mediante:
 
 ```python
 CajaSensores
 CajaActuadores
 ```
 
-Esta separación permite que el código sea más ordenado, fácil de mantener y más sencillo de adaptar si se cambian sensores, actuadores o pines físicos.
+El código principal del ESP32 no debe usar directamente:
 
----
-
-## Flujo general de funcionamiento
-
-1. La ESP32 inicia el sistema y se conecta a la red WiFi.
-2. La ESP32 establece conexión con el broker MQTT.
-3. Los joysticks o comandos MQTT controlan los servomotores de la garra.
-4. La cámara captura imágenes desde la posición indicada.
-5. El servidor Python recibe datos del sistema y procesa las imágenes.
-6. El módulo de IA analiza la imagen y genera un resultado preliminar.
-7. El sistema puede activar indicadores físicos como LED o buzzer.
-8. Los estados del prototipo se publican mediante tópicos MQTT.
-
----
-
-## Hardware utilizado
-
-| Componente                   | Función dentro del sistema              |
-| ---------------------------- | --------------------------------------- |
-| ESP32                        | Control principal del prototipo         |
-| Servomotor de base           | Movimiento izquierda/derecha            |
-| Joystick                     | Control manual de la base               |
-| Cámara                       | Captura de imágenes para análisis       |
-| Fuente externa de 5V         | Alimentación de servomotores            |
-| LED                          | Indicador visual del estado del sistema |
-| Buzzer                       | Indicador sonoro                        |
-| Cables Dupont                | Conexión entre módulos                  |
-| Estructura de garra robótica | Soporte mecánico del sistema            |
-
----
-
-## Software utilizado
-
-| Componente             | Tecnología                     |
-| ---------------------- | ------------------------------ |
-| Control de ESP32       | MicroPython                    |
-| Comunicación           | MQTT                           |
-| Broker                 | Mosquitto                      |
-| Servidor               | Python                         |
-| Cliente MQTT en Python | paho-mqtt                      |
-| IA                     | Modelo de análisis de imágenes |
-| Control de hardware    | HAL en MicroPython             |
-
----
-
-## Matriz de tópicos MQTT
-
-### Publicación: ESP32 → Broker → Servidor Python
-
-| # | Tópico                  | Tipo de dato | Valores posibles                                        | Descripción                              |
-| - | ----------------------- | ------------ | ------------------------------------------------------- | ---------------------------------------- |
-| 1 | `garra/sistema/estado`  | string       | `IDLE`, `MOVIENDO`, `CAPTURANDO`, `ANALIZANDO`, `ERROR` | Estado general del sistema               |
-| 2 | `garra/base/posicion`   | float/string | `0` a `180`                                             | Posición angular de la base              |
-| 3 | `garra/hombro/posicion` | float/string | `0` a `180`                                             | Posición angular del hombro              |
-| 4 | `garra/joystick/base`   | int/string   | `0` a `4095`                                            | Lectura analógica del joystick de base   |
-| 5 | `garra/joystick/hombro` | int/string   | `0` a `4095`                                            | Lectura analógica del joystick de hombro |
-| 6 | `garra/camara/estado`   | string       | `lista`, `capturando`, `error`                          | Estado de la cámara                      |
-| 7 | `garra/ia/resultado`    | JSON/string  | Resultado del modelo                                    | Resultado preliminar del análisis de IA  |
-| 8 | `garra/sistema/error`   | string       | Descripción libre                                       | Mensajes de error del sistema            |
-
----
-
-### Suscripción: Servidor Python → Broker → ESP32
-
-| # | Tópico                      | Payload                  | Acción esperada                                          |
-| - | --------------------------- | ------------------------ | -------------------------------------------------------- |
-| 1 | `garra/cmd/base/mover`      | `{"angulo": 90}`         | Mover la base a un ángulo específico                     |
-| 2 | `garra/cmd/hombro/mover`    | `{"angulo": 120}`        | Mover el hombro a un ángulo específico                   |
-| 3 | `garra/cmd/camara/capturar` | Cualquier texto          | Solicitar captura de imagen                              |
-| 4 | `garra/cmd/led/estado`      | `on`, `off`, `blink`     | Controlar LED indicador                                  |
-| 5 | `garra/cmd/buzzer/senal`    | `inicio`, `fin`, `error` | Activar señal sonora                                     |
-| 6 | `garra/cmd/seguro`          | `STOP`                   | Detener actuadores y colocar el sistema en estado seguro |
-
----
-
-## Instalación y puesta en marcha
-
-### 1. Instalar broker Mosquitto
-
-En Ubuntu, Debian o Raspberry Pi OS:
-
-```bash
-sudo apt update
-sudo apt install mosquitto mosquitto-clients -y
-sudo systemctl start mosquitto
-sudo systemctl enable mosquitto
+```python
+machine.Pin
+machine.PWM
+machine.ADC
 ```
 
-Verificar que Mosquitto esté activo:
+La lectura de sensores y el control de actuadores debe realizarse mediante métodos de la HAL, por ejemplo:
+
+```python
+sensores.obtener_resumen()
+actuadores.mover_base(90)
+actuadores.estado_seguro()
+```
+
+---
+
+## Máquina de estados del ESP32
+
+El archivo principal de control está en:
+
+```text
+sistema/esp32/nucleo/maquina_estado.py
+```
+
+Estados principales:
+
+| Estado            | Descripción                               |
+| ----------------- | ----------------------------------------- |
+| `ESTADO_BOOT`     | Inicializa WiFi, MQTT y hardware          |
+| `ESTADO_ESPERA`   | Publica sensores y espera comandos        |
+| `ESTADO_OPERANDO` | Lee joystick, mueve servo y publica datos |
+| `ESTADO_ERROR`    | Activa estado seguro y reporta error      |
+
+---
+
+## Broker Mosquitto en Raspberry Pi
+
+La Raspberry Pi se usa como broker MQTT local.
+
+Datos de conexión:
+
+| Parámetro   | Valor        |
+| ----------- | ------------ |
+| Red WiFi    | RaspberryLAN |
+| IP broker   | 192.168.4.1  |
+| Puerto MQTT | 1884         |
+| Usuario     | admin        |
+| Contraseña  | 123          |
+
+Para instalar y configurar Mosquitto:
+
+```bash
+cd sistema/raspberry/comunicacion
+chmod +x instalar_mosquitto.sh
+./instalar_mosquitto.sh
+```
+
+Para verificar Mosquitto:
 
 ```bash
 sudo systemctl status mosquitto
 ```
 
-Verificar puerto MQTT:
+Para escuchar todos los mensajes:
 
 ```bash
-sudo netstat -tlnp | grep 1883
+mosquitto_sub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/#" -v
 ```
 
 ---
 
-### 2. Instalar dependencias del servidor Python
+## Matriz de tópicos MQTT
 
-```bash
-pip install paho-mqtt
-```
+### Publicación: ESP32 → Mosquitto → Raspberry
 
-Ejecutar el servidor:
+| Tópico                            | Payload                          | Descripción                         |
+| --------------------------------- | -------------------------------- | ----------------------------------- |
+| `sistema/estado`                  | texto                            | Estado general del sistema          |
+| `sistema/error`                   | texto                            | Mensaje de error                    |
+| `sistema/sensores/pir`            | `true` / `false`                 | Movimiento o presencia detectada    |
+| `sistema/sensores/ultrasonico`    | número / `null`                  | Distancia aproximada en cm          |
+| `sistema/sensores/joystick_base`  | `0` a `4095`                     | Lectura analógica del joystick      |
+| `sistema/sensores/direccion_base` | `DERECHA`, `IZQUIERDA`, `CENTRO` | Dirección interpretada del joystick |
+| `sistema/actuadores/base/grados`  | `0` a `180`                      | Ángulo real de la base              |
+| `sistema/actuadores/brazo/grados` | `0` a `180`                      | Ángulo del brazo, si se usa         |
+| `sistema/ia/resultado`            | JSON                             | Resultado del análisis de IA        |
+| `sistema/alertas/ultima`          | texto                            | Última alerta del sistema           |
 
-```bash
-python servidor_python.py
-```
+### Suscripción: Raspberry → Mosquitto → ESP32
 
----
-
-### 3. Preparar la ESP32 con MicroPython
-
-Flashear MicroPython en la ESP32. Se recomienda utilizar una versión igual o superior a MicroPython 1.20.
-
-Copiar los archivos principales a la ESP32:
-
-```bash
-mpremote cp dispositivos.py :dispositivos.py
-mpremote cp mqtt_esp32.py :mqtt_esp32.py
-```
-
-Editar en `mqtt_esp32.py` los datos de conexión:
-
-```python
-WIFI_SSID = "NOMBRE_DE_TU_RED"
-WIFI_PASSWORD = "CONTRASEÑA"
-BROKER_HOST = "IP_DEL_BROKER"
-```
-
-Ejecutar el archivo:
-
-```bash
-mpremote run mqtt_esp32.py
-```
-
-O copiarlo como `main.py` para que inicie automáticamente:
-
-```bash
-mpremote cp mqtt_esp32.py :main.py
-```
+| Tópico                            | Payload                  | Acción esperada                    |
+| --------------------------------- | ------------------------ | ---------------------------------- |
+| `sistema/cmd/iniciar`             | `on`                     | Entra en estado OPERANDO           |
+| `sistema/cmd/iniciar`             | `off`                    | Vuelve a estado ESPERA             |
+| `sistema/cmd/base/mover`          | `90` o `{"angulo": 90}`  | Mueve la base al ángulo indicado   |
+| `sistema/cmd/brazo/mover`         | `90` o `{"angulo": 90}`  | Mueve el brazo al ángulo indicado  |
+| `sistema/cmd/servo/iniciar`       | `0` a `180`              | Tópico compatible para mover servo |
+| `sistema/cmd/led/azul/estado`     | `on`, `off`, `blink`     | Controla LED azul                  |
+| `sistema/cmd/led/amarillo/estado` | `on`, `off`, `blink`     | Controla LED amarillo              |
+| `sistema/cmd/led/rojo/estado`     | `on`, `off`, `blink`     | Controla LED rojo                  |
+| `sistema/cmd/led/parpadear`       | JSON                     | Parpadea LED indicado              |
+| `sistema/cmd/buzzer/senal`        | `lista`, `quieta`, `fin` | Activa señal sonora                |
+| `sistema/cmd/seguro`              | cualquier texto          | Activa estado seguro               |
 
 ---
 
-## Conexión básica de servomotores
+## Ejemplos de prueba MQTT
 
-Los servomotores deben alimentarse con una fuente externa de 5V. No se recomienda alimentar los servos directamente desde la ESP32.
-
-```text
-Fuente 5V +  → cable rojo de los servos
-Fuente 5V -  → cable café/negro de los servos
-GND fuente   → GND ESP32
-
-Señal servo base   → GPIO25 ESP32
-Señal servo hombro → GPIO26 ESP32
-```
-
-Los joysticks pueden alimentarse desde la ESP32:
-
-```text
-Joystick +5V/VCC → 3V3 ESP32
-Joystick GND     → GND ESP32
-Joystick VRx     → GPIO34
-Joystick VRy     → GPIO33
-```
-
----
-
-## Verificación con cliente MQTT
-
-Escuchar todos los mensajes del sistema:
+Escuchar todos los mensajes:
 
 ```bash
-mosquitto_sub -h localhost -t "garra/#" -v
+mosquitto_sub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/#" -v
 ```
 
-Enviar comando para mover la base:
+Iniciar operación:
 
 ```bash
-mosquitto_pub -h localhost -t "garra/cmd/base/mover" -m '{"angulo": 90}'
+mosquitto_pub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/cmd/iniciar" -m "on"
 ```
 
-Enviar comando para mover el hombro:
+Volver a espera:
 
 ```bash
-mosquitto_pub -h localhost -t "garra/cmd/hombro/mover" -m '{"angulo": 120}'
+mosquitto_pub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/cmd/iniciar" -m "off"
 ```
 
-Activar LED:
+Mover base a 120 grados:
 
 ```bash
-mosquitto_pub -h localhost -t "garra/cmd/led/estado" -m "blink"
+mosquitto_pub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/cmd/base/mover" -m "120"
+```
+
+Mover base con JSON:
+
+```bash
+mosquitto_pub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/cmd/base/mover" -m '{"angulo": 90}'
+```
+
+Activar buzzer:
+
+```bash
+mosquitto_pub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/cmd/buzzer/senal" -m "lista"
 ```
 
 Activar estado seguro:
 
 ```bash
-mosquitto_pub -h localhost -t "garra/cmd/seguro" -m "STOP"
+mosquitto_pub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/cmd/seguro" -m "on"
 ```
 
 ---
 
-## Estructura sugerida del repositorio
+## Interfaz gráfica en Raspberry
+
+La interfaz se encuentra en:
 
 ```text
-.
-├── esp32/
-│   ├── mqtt_esp32.py
-│   ├── dispositivos.py
-│   └── control_servos.py
-│
-├── servidor/
-│   ├── servidor_python.py
-│   ├── ia_modelo.py
-│   └── captura_camara.py
-│
-├── docs/
-│   ├── arquitectura.md
-│   ├── topicos_mqtt.md
-│   └── conexiones.md
-│
-├── imagenes/
-│   ├── prototipo.jpg
-│   └── diagrama_sistema.png
-│
-├── README.md
-└── requirements.txt
+sistema/raspberry/interfaz/vista_pantalla.py
 ```
 
+El archivo encargado de unir interfaz y MQTT es:
+
+```text
+sistema/raspberry/main_interfaz_mqtt.py
+```
+
+Ejecutar interfaz conectada a MQTT:
+
+```bash
+cd sistema/raspberry
+python3 main_interfaz_mqtt.py
+```
+
+La interfaz permite:
+
+* Mostrar distancia del usuario.
+* Mostrar movimiento detectado.
+* Mostrar ángulo actual de la base/cámara.
+* Mostrar estado del sistema.
+* Enviar comando ON al ESP32.
+* Enviar comando OFF al ESP32.
+* Enviar comando de estado seguro.
+* Solicitar movimiento de base mediante flechas.
+
 ---
 
-## Dependencias y versiones
+## Flujo de funcionamiento esperado
 
-| Componente       | Entorno           | Librería               | Versión mínima                 |
-| ---------------- | ----------------- | ---------------------- | ------------------------------ |
-| ESP32            | MicroPython       | `umqtt.simple`         | Incluida en MicroPython ≥ 1.20 |
-| Servidor Python  | CPython           | `paho-mqtt`            | ≥ 1.6.1                        |
-| Broker MQTT      | Sistema operativo | Mosquitto              | ≥ 2.0                          |
-| Procesamiento IA | Python            | Según modelo utilizado | Variable                       |
+1. La Raspberry crea la red local `RaspberryLAN`.
+2. Mosquitto queda activo en `192.168.4.1:1884`.
+3. La ESP32 se conecta a la red de la Raspberry.
+4. La ESP32 se conecta al broker MQTT.
+5. La ESP32 inicializa sensores y actuadores mediante la HAL.
+6. La ESP32 publica estado, distancia, PIR, joystick y grados.
+7. `mqtt_bridge.py` recibe los datos en Raspberry.
+8. `vista_pantalla.py` actualiza la interfaz.
+9. El usuario presiona ON en la interfaz.
+10. La interfaz publica `sistema/cmd/iniciar = on`.
+11. La ESP32 entra en estado OPERANDO.
+12. El joystick puede mover la base.
+13. Las flechas de la interfaz pueden solicitar un ángulo.
+14. La ESP32 mueve el servo y publica el ángulo real.
+15. La interfaz muestra el ángulo real recibido.
 
 ---
 
-## Estado actual del prototipo
+## Inteligencia artificial
 
-Actualmente el prototipo permite controlar el movimiento de la base mediante servomotor y joystick. La estructura mecánica de la garra está ensamblada y se trabaja en la integración del movimiento vertical de la cámara, así como en la conexión entre la cámara, el servidor Python y el módulo de IA.
+El proyecto cuenta con un modelo de detección basado en YOLO dentro de la carpeta de IA. Actualmente se encuentra en proceso de integración con el flujo MQTT.
+
+La integración esperada es:
+
+```text
+Cámara / captura
+      ↓
+Python IA en Raspberry
+      ↓
+Resultado del modelo
+      ↓
+MQTT: sistema/ia/resultado
+      ↓
+Interfaz / Firebase / actuadores
+```
+
+El modelo no debe ejecutarse en la ESP32. La IA debe correr en Raspberry, PC o servidor externo.
 
 ---
 
-## Mejoras futuras
+## Firebase
 
-* Integrar control completo de hombro y base.
-* Añadir límites de seguridad para evitar forzar los servomotores.
-* Implementar captura automática desde la cámara.
-* Mejorar el modelo de IA para análisis de imágenes.
-* Guardar resultados en una base de datos.
-* Integrar una interfaz gráfica para visualizar imágenes y resultados.
-* Agregar registro histórico de capturas y análisis.
-* Mejorar la estructura mecánica para reducir vibraciones.
+Firebase está contemplado para registrar eventos e histórico del sistema.
+
+Estructura esperada:
+
+```text
+canma/
+  estado_actual/
+    distancia_cm
+    movimiento_usuario
+    grados_camara
+    estado_sistema
+    ultimo_resultado_ia
+    timestamp
+
+  eventos/
+    evento_id/
+      tipo
+      valor
+      timestamp
+
+  alertas/
+    alerta_id/
+      tipo
+      mensaje
+      timestamp
+```
+
+Eventos mínimos esperados:
+
+* Lectura de distancia.
+* Movimiento/presencia.
+* Cambio de ángulo de base.
+* Resultado de IA.
+* Estado del sistema.
+* Alertas.
+
+> No deben almacenarse imágenes identificables en Firebase sin anonimización.
+
+---
+
+## Pruebas recomendadas
+
+### 1. Probar HAL del ESP32
+
+Verificar que el ESP32 lea:
+
+* PIR.
+* Ultrasónico.
+* Joystick.
+* Posición de base.
+
+También verificar que controle:
+
+* Servo base.
+* LEDs.
+* Buzzer.
+
+### 2. Probar Mosquitto
+
+```bash
+mosquitto_sub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/#" -v
+```
+
+### 3. Probar publicación de ESP32
+
+Confirmar que aparezcan mensajes como:
+
+```text
+sistema/estado Iniciando
+sistema/sensores/pir false
+sistema/sensores/ultrasonico 25.4
+sistema/sensores/joystick_base 2100
+sistema/sensores/direccion_base CENTRO
+sistema/actuadores/base/grados 90
+```
+
+### 4. Probar comandos hacia ESP32
+
+```bash
+mosquitto_pub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/cmd/iniciar" -m "on"
+```
+
+```bash
+mosquitto_pub -h 192.168.4.1 -p 1884 -u admin -P 123 -t "sistema/cmd/base/mover" -m "120"
+```
+
+### 5. Probar interfaz
+
+Ejecutar:
+
+```bash
+cd sistema/raspberry
+python3 main_interfaz_mqtt.py
+```
+
+Confirmar:
+
+* Botón ON cambia el sistema a operación.
+* Botón OFF vuelve a espera.
+* Flechas publican ángulo de base.
+* Distancia, movimiento y grados se actualizan con datos reales.
+
+---
+
+## Dependencias principales
+
+### Raspberry Pi
+
+```bash
+sudo apt update
+sudo apt install mosquitto mosquitto-clients -y
+sudo apt install python3-paho-mqtt -y
+sudo apt install python3-opencv -y
+sudo apt install python3-pil python3-pil.imagetk -y
+```
+
+Opcional con pip:
+
+```bash
+python3 -m pip install paho-mqtt
+```
+
+### ESP32
+
+* MicroPython.
+* `umqtt.simple`.
+* Archivos del proyecto copiados a la memoria del ESP32.
+
+---
+
+## Consideraciones físicas del prototipo
+
+Para la entrega física se recomienda:
+
+* Evitar protoboard expuesta.
+* Evitar cables sueltos visibles.
+* Usar fuente externa fija para servomotores.
+* Colocar sensores en una estructura o carcasa.
+* Etiquetar el prototipo con nombre del proyecto e integrantes.
+* Probar el flujo completo antes del video demostrativo.
 
 ---
 
 ## Consideraciones éticas y médicas
 
-Este proyecto tiene fines académicos, tecnológicos y de investigación. El sistema de IA puede apoyar en la identificación de patrones visuales, pero no debe considerarse un diagnóstico médico.
+CANMA es un prototipo educativo y experimental. El sistema puede apoyar en el análisis visual, pero no representa un diagnóstico médico.
 
-Cualquier resultado generado por el sistema debe ser revisado por personal médico capacitado y complementarse con estudios clínicos autorizados.
+Cualquier resultado generado por la IA debe ser revisado por personal médico capacitado y complementarse con estudios clínicos autorizados.
 
 ---
 
 ## Licencia
 
-Este proyecto fue desarrollado con fines educativos.
-El uso, modificación o distribución del código deberá respetar los lineamientos establecidos por los integrantes del equipo y la institución académica correspondiente.
+Este proyecto fue desarrollado con fines educativos para la materia de Sistemas Programables.
+
+El uso, modificación o distribución del código deberá respetar los lineamientos de los integrantes del equipo y de la institución académica correspondiente.
