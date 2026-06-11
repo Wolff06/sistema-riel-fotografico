@@ -1,17 +1,18 @@
+# -*- coding: utf-8 -*-
 # =============================================================================
-# PROYECTO: CANMA - Garra Robótica con Cámara e IA
+# PROYECTO: CANMA - Garra Robotica con Camara e IA
 #
 # ARCHIVO:
 # sistema/raspberry/IA/ia_processor_mqtt.py
 #
 # OBJETIVO:
-# Ejecutar el modelo YOLO en Raspberry/servidor externo, recibir por MQTT
-# la orden de activar o apagar la IA, analizar la cámara y publicar un resultado
-# procesable para el resto del sistema.
+# Ejecutar el modelo YOLO en Raspberry o servidor externo, esperar la orden
+# MQTT para activar o apagar la IA, procesar la camara y publicar un resultado
+# que pueda ser leido por la interfaz, Firebase y ESP32.
 #
 # FLUJO:
-# Interfaz → MQTT → ia_processor_mqtt.py
-# ia_processor_mqtt.py → MQTT → ESP32 / interfaz
+# Interfaz -> MQTT -> IA
+# IA -> MQTT -> ESP32 / Interfaz / Firebase
 # =============================================================================
 
 import os
@@ -20,12 +21,19 @@ import json
 import time
 from datetime import datetime
 
-import paho.mqtt.client as mqtt
-from ultralytics import YOLO
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:
+    mqtt = None
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
 
 # =============================================================================
-# CONFIGURACIÓN GENERAL
+# CONFIGURACION GENERAL
 # =============================================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,12 +54,15 @@ BROKER_USER = "admin"
 BROKER_PASS = "123"
 
 CAMARA_ID = 0
+
 CONFIANZA_MINIMA = 0.45
 INTERVALO_PUBLICACION = 2.0
 
+MOSTRAR_VENTANA = True
+
 
 # =============================================================================
-# TÓPICOS MQTT
+# TOPICOS MQTT
 # =============================================================================
 
 T_CMD_IA_ESTADO = "sistema/cmd/ia/estado"
@@ -69,19 +80,19 @@ cliente_mqtt = None
 
 
 # =============================================================================
-# FUNCIONES DE CLASIFICACIÓN
+# FUNCIONES DE IA
 # =============================================================================
 
 def normalizar_lectura(clase):
     """
-    Parámetros:
+    Parametros:
         clase: nombre de clase entregado por YOLO.
 
     Hace:
         Convierte el nombre del modelo a una lectura simple para el sistema.
 
     Devuelve:
-        "herido", "ileso", "falso" o "sin_lectura".
+        herido, ileso, falso o sin_lectura.
     """
 
     if clase is None:
@@ -92,7 +103,10 @@ def normalizar_lectura(clase):
     if "herido" in texto:
         return "herido"
 
-    if "ileso" in texto or "sano" in texto:
+    if "ileso" in texto:
+        return "ileso"
+
+    if "sano" in texto:
         return "ileso"
 
     if "falso" in texto:
@@ -103,38 +117,48 @@ def normalizar_lectura(clase):
 
 def crear_payload_resultado(clase, confianza):
     """
-    Parámetros:
-        clase: clase detectada por YOLO.
+    Parametros:
+        clase: clase detectada.
         confianza: confianza del modelo.
 
     Hace:
-        Crea un JSON estándar para que ESP32, interfaz y Firebase puedan leerlo.
+        Crea un diccionario estandar para publicar el resultado de IA.
 
     Devuelve:
-        Diccionario con resultado IA.
+        Diccionario con resultado.
     """
 
     lectura = normalizar_lectura(clase)
 
-    alerta = lectura == "herido"
+    alerta = False
 
-    return {
+    if lectura == "herido":
+        alerta = True
+
+    if clase is None:
+        clase_texto = "Sin lectura"
+    else:
+        clase_texto = str(clase)
+
+    datos = {
         "estado_ia": "activa" if ia_activa else "apagada",
         "lectura": lectura,
-        "clase": "Sin lectura" if clase is None else str(clase),
+        "clase": clase_texto,
         "confianza": round(float(confianza), 3),
         "alerta": alerta,
         "timestamp": datetime.now().isoformat(timespec="seconds")
     }
 
+    return datos
+
 
 def publicar_resultado(datos):
     """
-    Parámetros:
-        datos: diccionario con resultado IA.
+    Parametros:
+        datos: diccionario con resultado de IA.
 
     Hace:
-        Publica el resultado de IA y una alerta legible por MQTT.
+        Publica el resultado de IA por MQTT y tambien una alerta legible.
 
     Devuelve:
         Nada.
@@ -146,6 +170,7 @@ def publicar_resultado(datos):
     mensaje_json = json.dumps(datos, ensure_ascii=False)
 
     print("PUBLICANDO IA:", mensaje_json)
+
     cliente_mqtt.publish(T_IA_RESULTADO, mensaje_json)
 
     lectura = datos.get("lectura", "sin_lectura")
@@ -153,30 +178,34 @@ def publicar_resultado(datos):
     confianza = datos.get("confianza", 0)
 
     if lectura == "herido":
-        alerta = "IA: posible hallazgo visual detectado"
+        texto_alerta = "IA: posible hallazgo visual detectado"
     elif lectura == "ileso":
-        alerta = "IA: lectura sin alerta visual"
+        texto_alerta = "IA: lectura sin alerta visual"
     elif lectura == "falso":
-        alerta = "IA: detección marcada como falso positivo"
+        texto_alerta = "IA: deteccion marcada como falso positivo"
     else:
-        alerta = "IA: sin lectura confiable"
+        texto_alerta = "IA: sin lectura confiable"
 
-    texto_alerta = f"{alerta} | {clase} | confianza: {confianza}"
+    mensaje_alerta = "{} | {} | confianza: {}".format(
+        texto_alerta,
+        clase,
+        confianza
+    )
 
-    cliente_mqtt.publish(T_ALERTA_ULTIMA, texto_alerta)
+    cliente_mqtt.publish(T_ALERTA_ULTIMA, mensaje_alerta)
 
 
 def obtener_mejor_deteccion(modelo, frame):
     """
-    Parámetros:
+    Parametros:
         modelo: modelo YOLO cargado.
-        frame: imagen capturada por cámara.
+        frame: imagen capturada por camara.
 
     Hace:
-        Ejecuta YOLO y toma la detección con mayor confianza.
+        Ejecuta YOLO y toma la deteccion con mayor confianza.
 
     Devuelve:
-        clase, confianza, caja.
+        clase, confianza y caja.
     """
 
     resultados = modelo.predict(
@@ -191,7 +220,10 @@ def obtener_mejor_deteccion(modelo, frame):
     mejor_caja = None
 
     for resultado in resultados:
-        if resultado.boxes is None or len(resultado.boxes) == 0:
+        if resultado.boxes is None:
+            continue
+
+        if len(resultado.boxes) == 0:
             continue
 
         cajas = resultado.boxes.xyxy.cpu().numpy()
@@ -209,14 +241,14 @@ def obtener_mejor_deteccion(modelo, frame):
 
 def dibujar_resultado(frame, clase, confianza, caja):
     """
-    Parámetros:
-        frame: imagen de cámara.
+    Parametros:
+        frame: imagen de camara.
         clase: clase detectada.
         confianza: confianza del modelo.
-        caja: coordenadas de detección.
+        caja: coordenadas de deteccion.
 
     Hace:
-        Dibuja la detección principal en pantalla.
+        Dibuja el resultado principal en pantalla.
 
     Devuelve:
         Frame con anotaciones.
@@ -234,6 +266,7 @@ def dibujar_resultado(frame, clase, confianza, caja):
             (0, 255, 255),
             2
         )
+
         return frame
 
     x1, y1, x2, y2 = map(int, caja)
@@ -245,9 +278,18 @@ def dibujar_resultado(frame, clase, confianza, caja):
     else:
         color = (0, 255, 255)
 
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    cv2.rectangle(
+        frame,
+        (x1, y1),
+        (x2, y2),
+        color,
+        2
+    )
 
-    texto = f"{clase} {confianza * 100:.1f}%"
+    texto = "{} {:.1f}%".format(
+        clase,
+        confianza * 100
+    )
 
     cv2.putText(
         frame,
@@ -266,6 +308,43 @@ def dibujar_resultado(frame, clase, confianza, caja):
 # MQTT
 # =============================================================================
 
+def crear_cliente_mqtt():
+    """
+    Hace:
+        Crea el cliente MQTT compatible con versiones nuevas y viejas de paho.
+
+    Devuelve:
+        Cliente MQTT.
+    """
+
+    if mqtt is None:
+        raise ImportError(
+            "No esta instalado paho-mqtt. Instala con: python3 -m pip install paho-mqtt"
+        )
+
+    try:
+        cliente = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
+            client_id="canma_ia_processor"
+        )
+    except Exception:
+        try:
+            cliente = mqtt.Client(client_id="canma_ia_processor")
+        except Exception:
+            cliente = mqtt.Client("canma_ia_processor")
+
+    cliente.username_pw_set(
+        username=BROKER_USER,
+        password=BROKER_PASS
+    )
+
+    cliente.on_connect = on_connect
+    cliente.on_message = on_message
+    cliente.on_disconnect = on_disconnect
+
+    return cliente
+
+
 def on_connect(client, userdata, flags, rc):
     """
     Hace:
@@ -277,7 +356,16 @@ def on_connect(client, userdata, flags, rc):
         client.subscribe(T_CMD_IA_ESTADO)
         print("IA suscrita a:", T_CMD_IA_ESTADO)
     else:
-        print("Error conectando IA a MQTT. Código:", rc)
+        print("Error conectando IA a MQTT. Codigo:", rc)
+
+
+def on_disconnect(client, userdata, rc=None):
+    """
+    Hace:
+        Se ejecuta cuando la IA se desconecta del broker.
+    """
+
+    print("IA desconectada de MQTT")
 
 
 def on_message(client, userdata, msg):
@@ -310,6 +398,7 @@ def on_message(client, userdata, msg):
                 "alerta": False,
                 "timestamp": datetime.now().isoformat(timespec="seconds")
             }
+
             publicar_resultado(datos)
 
         elif mensaje in ("off", "apagar", "false", "0"):
@@ -324,34 +413,58 @@ def on_message(client, userdata, msg):
                 "alerta": False,
                 "timestamp": datetime.now().isoformat(timespec="seconds")
             }
+
             publicar_resultado(datos)
 
+        else:
+            print("Comando IA no reconocido:", mensaje)
 
-def crear_cliente_mqtt():
+
+# =============================================================================
+# VALIDACIONES
+# =============================================================================
+
+def validar_modelo():
     """
     Hace:
-        Crea y conecta el cliente MQTT de la IA.
+        Verifica que exista el modelo entrenado.
 
     Devuelve:
-        Cliente MQTT conectado.
+        Nada.
     """
 
-    try:
-        cliente = mqtt.Client(
-            callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
-            client_id="canma_ia_processor"
+    if YOLO is None:
+        raise ImportError(
+            "No esta instalado ultralytics. Instala con: python3 -m pip install ultralytics"
         )
-    except Exception:
-        cliente = mqtt.Client(client_id="canma_ia_processor")
 
-    cliente.username_pw_set(BROKER_USER, BROKER_PASS)
-    cliente.on_connect = on_connect
-    cliente.on_message = on_message
+    if not os.path.exists(MODELO_PATH):
+        print("No se encontro el modelo en:")
+        print(MODELO_PATH)
+        print("")
+        print("Revisa que exista:")
+        print("Modelo-Feb2026/runs/cancer/train_v1/weights/best.pt")
+        raise FileNotFoundError("Modelo YOLO no encontrado")
 
-    cliente.connect(BROKER_HOST, BROKER_PORT, 60)
-    cliente.loop_start()
 
-    return cliente
+def abrir_camara():
+    """
+    Hace:
+        Abre la camara con OpenCV.
+
+    Devuelve:
+        Objeto de camara o None.
+    """
+
+    camara = cv2.VideoCapture(CAMARA_ID)
+
+    if not camara.isOpened():
+        print("No se pudo abrir la camara con indice:", CAMARA_ID)
+        print("La IA seguira viva en MQTT, pero publicara sin lectura.")
+        return None
+
+    print("Camara abierta correctamente")
+    return camara
 
 
 # =============================================================================
@@ -361,80 +474,116 @@ def crear_cliente_mqtt():
 def main():
     """
     Hace:
-        Carga el modelo YOLO, abre la cámara y procesa frames solo cuando
-        la IA esté activa por MQTT.
+        Carga modelo, conecta MQTT, abre camara y procesa frames solo cuando
+        la IA este activa.
     """
 
     global cliente_mqtt
 
-    print("Cargando modelo IA...")
-    print("Ruta del modelo:", MODELO_PATH)
+    print("Iniciando procesador IA CANMA")
+    print("Ruta del modelo:")
+    print(MODELO_PATH)
 
+    validar_modelo()
+
+    print("Cargando modelo YOLO...")
     modelo = YOLO(MODELO_PATH)
+    print("Modelo cargado correctamente")
 
     cliente_mqtt = crear_cliente_mqtt()
 
-    camara = cv2.VideoCapture(CAMARA_ID)
+    print("Conectando IA a MQTT...")
+    print("Broker:", BROKER_HOST)
+    print("Puerto:", BROKER_PORT)
 
-    if not camara.isOpened():
-        print("No se pudo abrir la cámara.")
-        print("La IA seguirá conectada a MQTT, pero publicará sin lectura.")
-        camara = None
+    cliente_mqtt.connect(BROKER_HOST, BROKER_PORT, 60)
+    cliente_mqtt.loop_start()
+
+    camara = abrir_camara()
 
     ultimo_envio = 0
     ultima_lectura = None
 
+    print("")
     print("Procesador IA listo.")
-    print("Para activar IA publica: sistema/cmd/ia/estado = on")
-    print("Para apagar IA publica: sistema/cmd/ia/estado = off")
+    print("Para activar IA:")
+    print("mosquitto_pub -h 192.168.4.1 -p 1884 -u admin -P 123 -t sistema/cmd/ia/estado -m on")
+    print("")
+    print("Para apagar IA:")
+    print("mosquitto_pub -h 192.168.4.1 -p 1884 -u admin -P 123 -t sistema/cmd/ia/estado -m off")
+    print("")
+    print("Para salir presiona Ctrl+C o Q en la ventana de camara.")
 
-    while True:
-        if not ia_activa:
-            time.sleep(0.2)
-            continue
+    try:
+        while True:
+            if not ia_activa:
+                time.sleep(0.2)
+                continue
 
-        if camara is None:
-            datos = crear_payload_resultado(None, 0)
-            publicar_resultado(datos)
-            time.sleep(INTERVALO_PUBLICACION)
-            continue
+            if camara is None:
+                datos = crear_payload_resultado(None, 0)
+                publicar_resultado(datos)
+                time.sleep(INTERVALO_PUBLICACION)
+                continue
 
-        ret, frame = camara.read()
+            ret, frame = camara.read()
 
-        if not ret:
-            datos = crear_payload_resultado(None, 0)
-            publicar_resultado(datos)
-            time.sleep(INTERVALO_PUBLICACION)
-            continue
+            if not ret:
+                datos = crear_payload_resultado(None, 0)
+                publicar_resultado(datos)
+                time.sleep(INTERVALO_PUBLICACION)
+                continue
 
-        clase, confianza, caja = obtener_mejor_deteccion(modelo, frame)
-        lectura = normalizar_lectura(clase)
+            clase, confianza, caja = obtener_mejor_deteccion(
+                modelo,
+                frame
+            )
 
-        frame = dibujar_resultado(frame, clase, confianza, caja)
+            lectura = normalizar_lectura(clase)
 
-        ahora = time.time()
+            ahora = time.time()
 
-        if (ahora - ultimo_envio) >= INTERVALO_PUBLICACION or lectura != ultima_lectura:
-            datos = crear_payload_resultado(clase, confianza)
-            publicar_resultado(datos)
+            if (ahora - ultimo_envio) >= INTERVALO_PUBLICACION or lectura != ultima_lectura:
+                datos = crear_payload_resultado(
+                    clase,
+                    confianza
+                )
 
-            ultimo_envio = ahora
-            ultima_lectura = lectura
+                publicar_resultado(datos)
 
-        cv2.imshow("CANMA - IA MQTT", frame)
+                ultimo_envio = ahora
+                ultima_lectura = lectura
 
-        tecla = cv2.waitKey(1) & 0xFF
+            if MOSTRAR_VENTANA:
+                frame = dibujar_resultado(
+                    frame,
+                    clase,
+                    confianza,
+                    caja
+                )
 
-        if tecla == ord("q"):
-            break
+                cv2.imshow("CANMA - IA MQTT", frame)
 
-    if camara is not None:
-        camara.release()
+                tecla = cv2.waitKey(1) & 0xFF
 
-    cv2.destroyAllWindows()
+                if tecla == ord("q"):
+                    break
 
-    cliente_mqtt.loop_stop()
-    cliente_mqtt.disconnect()
+    except KeyboardInterrupt:
+        print("Cerrando procesador IA...")
+
+    finally:
+        if camara is not None:
+            camara.release()
+
+        if MOSTRAR_VENTANA:
+            cv2.destroyAllWindows()
+
+        if cliente_mqtt is not None:
+            cliente_mqtt.loop_stop()
+            cliente_mqtt.disconnect()
+
+        print("IA finalizada")
 
 
 if __name__ == "__main__":
