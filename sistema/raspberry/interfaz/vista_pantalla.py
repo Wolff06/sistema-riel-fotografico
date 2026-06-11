@@ -1,28 +1,15 @@
-<<<<<<< HEAD
-=======
 # =============================================================================
 # PROYECTO: Sistema de Riel Semicircular Fotográfico 180°
 
->>>>>>> origin/main
 # - OBJETIVO DEL CODIGO -
 # Diseñar y configurar la pantalla principal del sistema CANMA,
 # permitiendo navegar entre las pestañas de Sensores y Captura.
 # La pantalla está adaptada a una resolución de 800x480 para Raspberry Pi.
-<<<<<<< HEAD
-#
-=======
-
->>>>>>> origin/main
 # En la pestaña Sensores se muestran lecturas del ESP32:
 # distancia aproximada, movimiento del usuario y grados de la cámara.
 # Por ahora la distancia y el movimiento quedan con valores fijos de prueba,
 # pero el código ya incluye funciones para actualizarlos después desde Serial,
 # MQTT, Firebase u otro método de conexión.
-<<<<<<< HEAD
-#
-=======
-
->>>>>>> origin/main
 # En la pestaña Captura se conserva la lógica principal del código original:
 # botones de inicio/cierre/captura, filtros RGB/Grises/Canny, sliders de Canny,
 # activación de IA, extracción de frames y video en tiempo real a 360x270.
@@ -31,10 +18,7 @@
 # Macias Campos Ariadne Lizett
 # Soto Garnica Ari Adair
 # Lira Gamiño Luis Fernando
-<<<<<<< HEAD
-=======
 # =============================================================================
->>>>>>> origin/main
 
 # Importación de librerías
 import tkinter as tk
@@ -43,11 +27,8 @@ import cv2
 import numpy as np
 import os
 
-<<<<<<< HEAD
 import paho.mqtt.client as mqtt
 
-=======
->>>>>>> origin/main
 try:
     import modelo_pantalla as modelo_pantalla
 except Exception:
@@ -876,7 +857,6 @@ class VistaPantalla:
         """Inicia el loop principal de Tkinter."""
         self.pantalla.mainloop()
 
-<<<<<<< HEAD
 def on_connect(client, userdata, flags, rc):
     print("Connected with result code " + str(rc))
     client.subscribe("sistema/estado")
@@ -919,11 +899,3 @@ if __name__ == "__main__":
     client.loop_stop()
 
     
-=======
-
-# Permite probar la interfaz directamente con:
-# python vista_pantalla_canma.py
-if __name__ == "__main__":
-    app = VistaPantalla(modelo_pantalla)
-    app.iniciar()
->>>>>>> origin/main
