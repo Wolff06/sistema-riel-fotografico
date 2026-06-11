@@ -1,3 +1,18 @@
+# =============================================================================
+# PROYECTO: Sistema de Riel Semicircular Fotográfico 180°
+
+# - OBJETIVO DEL CODIGO -
+# Gestionar los estados principales del ESP32, 
+# inicializando la conexión WiFi/MQTT y el 
+# hardware del sistema, para después supervisar sensores 
+# y actuadores según el modo de operación, espera o error.
+
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+
+# =============================================================================
 import time
 import network
 

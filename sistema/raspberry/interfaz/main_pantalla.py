@@ -1,3 +1,18 @@
+# =============================================================================
+# PROYECTO: Sistema de Riel Semicircular Fotográfico 180°
+
+# - OBJETIVO DEL CODIGO -
+# Inicializar y ejecutar la interfaz
+# gráfica del sistema mediante la 
+# estructura Modelo-Vista-Controlador.
+
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+# =============================================================================
+
+
 from modelo_pantalla import ModeloPantalla
 from vista_pantalla import VistaPantalla
 from controlador_pantalla import ControladorPantalla

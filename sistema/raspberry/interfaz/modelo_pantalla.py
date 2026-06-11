@@ -1,3 +1,18 @@
+# =============================================================================
+# PROYECTO: Sistema de Riel Semicircular Fotográfico 180°
+
+# - OBJETIVO DEL CODIGO -
+# Controlar la cámara del sistema, 
+# aplicar filtros de procesamiento de imagen, 
+# grabar video, extraer frames y activar el clasificador
+# de inteligencia artificial para el análisis visual.
+
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+# =============================================================================
+
 import cv2
 import imutils
 import os
