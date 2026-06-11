@@ -1,3 +1,6 @@
+# =============================================================================
+# PROYECTO: Sistema de Riel Semicircular Fotográfico 180°
+
 # - OBJETIVO DEL CODIGO -
 # Gestionar los eventos de la interfaz gráfica del sistema, 
 # conectando los botones de la pantalla con las funciones 
@@ -9,7 +12,7 @@
 # Soto Garnica Ari Adair
 # Lira Gamiño Luis Fernando
 
-
+# =============================================================================
 import cv2
 import imutils
 import os
