@@ -107,9 +107,7 @@ Esta separación permite que el código sea más ordenado, fácil de mantener y 
 | ---------------------------- | --------------------------------------- |
 | ESP32                        | Control principal del prototipo         |
 | Servomotor de base           | Movimiento izquierda/derecha            |
-| Servomotor de hombro         | Movimiento arriba/abajo de la cámara    |
-| Joystick 1                   | Control manual de la base               |
-| Joystick 2                   | Control manual del movimiento vertical  |
+| Joystick                     | Control manual de la base               |
 | Cámara                       | Captura de imágenes para análisis       |
 | Fuente externa de 5V         | Alimentación de servomotores            |
 | LED                          | Indicador visual del estado del sistema |
