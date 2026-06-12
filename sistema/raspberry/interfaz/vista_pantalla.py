@@ -21,6 +21,8 @@
 # =============================================================================
 
 import tkinter as tk
+from tkinter import messagebox
+import json
 from PIL import Image, ImageTk
 import cv2
 import numpy as np
@@ -40,9 +42,12 @@ class VistaPantalla:
     T_CMD_INICIAR_OP = "sistema/cmd/iniciar"
     T_CMD_BASE_MOVER = "sistema/cmd/base/mover"
     T_CMD_SEGURO = "sistema/cmd/seguro"
+    T_CMD_MODO_SISTEMA = "sistema/cmd/modo"
+    T_CMD_IA_ESTADO = "sistema/cmd/ia/estado"
 
     def __init__(self, modelo=None):
         self.modelo = modelo
+        self.BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
         # =====================================================================
         # CONFIGURACIÓN DE TAMAÑO
@@ -87,6 +92,13 @@ class VistaPantalla:
         self.joystick_base = None
         self.direccion_base = "CENTRO"
 
+        # Control de modos para evitar que sensores e IA controlen LEDs al mismo tiempo.
+        self.modo_actual = "sensores"
+        self.sensores_activos = False
+        self.ia_activa = False
+        self.resultado_ia = "Sin lectura"
+        self.alerta_ultima = "Sin alertas"
+
         # Grados de cámara/base.
         self.grados_iniciales = 90
         self.MIN_GRADOS = 0
@@ -123,7 +135,7 @@ class VistaPantalla:
             value=self.grados_iniciales
         )
 
-        self.ruta_imagen_fondo = "./Detalles_de_pantalla/fondo_de_pantalla.png"
+        self.ruta_imagen_fondo = self._ruta_interfaz("Detalles_de_pantalla", "fondo_de_pantalla.png")
         self._crear_fondo_principal()
 
         self.contenedor = tk.Frame(
@@ -140,6 +152,11 @@ class VistaPantalla:
         self.mostrar_pagina("sensores")
 
         self._programar_actualizacion_sensores()
+
+    def _ruta_interfaz(self, *partes):
+        """Devuelve una ruta absoluta dentro de la carpeta interfaz."""
+
+        return os.path.join(self.BASE_DIR, *partes)
 
     # =========================================================================
     # CONFIGURACIÓN EXTERNA MQTT
@@ -311,9 +328,18 @@ class VistaPantalla:
         self._crear_pagina_captura()
 
     def mostrar_pagina(self, nombre_pagina):
-        """Cambia entre la pestaña Sensores y Captura."""
+        """Cambia entre Sensores y Captura con bloqueo de seguridad."""
+
+        if nombre_pagina == "captura" and self.sensores_activos:
+            self.mostrar_aviso("Primero apaga Sensores con OFF")
+            return
+
+        if nombre_pagina == "sensores" and self.ia_activa:
+            self.mostrar_aviso("Primero desactiva la IA")
+            return
 
         if nombre_pagina == "sensores":
+            self.modo_actual = "sensores"
             self.pagina_sensores.tkraise()
             self.boton_tab_sensores.config(
                 bg=self.COLOR_ROSA_ACTIVO,
@@ -324,6 +350,7 @@ class VistaPantalla:
                 font=("Arial", 9)
             )
         else:
+            self.modo_actual = "captura"
             self.pagina_captura.tkraise()
             self.boton_tab_captura.config(
                 bg=self.COLOR_ROSA_ACTIVO,
@@ -659,53 +686,103 @@ class VistaPantalla:
     # COMANDOS DE LA INTERFAZ HACIA MQTT
     # =========================================================================
 
+    def mostrar_aviso(self, mensaje):
+        """Muestra un aviso corto para el usuario."""
+
+        self.estado_sistema = mensaje
+        self.actualizar_panel_mensajes()
+
+        try:
+            messagebox.showinfo("CANMA", mensaje)
+        except Exception:
+            print("AVISO:", mensaje)
+
     def enviar_sistema_on(self):
-        """
-        Hace:
-            Solicita al ESP32 entrar en estado OPERANDO.
+        """Activa modo Sensores en el ESP32."""
 
-        Publica:
-            sistema/cmd/iniciar = on
-        """
+        if self.modo_actual != "sensores":
+            self.mostrar_aviso("Vuelve a Sensores para activar el sistema")
+            return
 
+        if self.ia_activa:
+            self.mostrar_aviso("Primero desactiva la IA")
+            return
+
+        self.sensores_activos = True
         self.sistema_activo = True
-        self.estado_sistema = "Solicitando operación"
+        self.estado_sistema = "Sensores activos"
         self._actualizar_estilo_onoff()
 
+        self._publicar_mqtt(self.T_CMD_MODO_SISTEMA, "sensores")
         self._publicar_mqtt(self.T_CMD_INICIAR_OP, "on")
         self.actualizar_panel_mensajes()
 
     def enviar_sistema_off(self):
-        """
-        Hace:
-            Solicita al ESP32 volver a estado ESPERA.
+        """Apaga modo Sensores y deja el sistema en reposo."""
 
-        Publica:
-            sistema/cmd/iniciar = off
-        """
-
+        self.sensores_activos = False
         self.sistema_activo = False
-        self.estado_sistema = "Solicitando espera"
+        self.estado_sistema = "Sensores en espera"
         self._actualizar_estilo_onoff()
 
         self._publicar_mqtt(self.T_CMD_INICIAR_OP, "off")
+        self._publicar_mqtt(self.T_CMD_MODO_SISTEMA, "reposo")
         self.actualizar_panel_mensajes()
 
     def enviar_estado_seguro(self):
-        """
-        Hace:
-            Solicita al ESP32 activar estado seguro.
+        """Solicita estado seguro al ESP32."""
 
-        Publica:
-            sistema/cmd/seguro = on
-        """
-
+        self.sensores_activos = False
         self.sistema_activo = False
+        self.ia_activa = False
         self.estado_sistema = "Solicitando estado seguro"
         self._actualizar_estilo_onoff()
 
+        try:
+            self.boton_ia.config(text="Activar IA")
+        except Exception:
+            pass
+
+        self._publicar_mqtt(self.T_CMD_IA_ESTADO, "off")
+        self._publicar_mqtt(self.T_CMD_MODO_SISTEMA, "reposo")
         self._publicar_mqtt(self.T_CMD_SEGURO, "on")
         self.actualizar_panel_mensajes()
+
+    def activar_ia_desde_controlador(self):
+        """Marca IA activa y avisa al ESP32 que ahora manda la IA."""
+
+        self.ia_activa = True
+        self.sistema_activo = False
+        self.sensores_activos = False
+        self.estado_sistema = "IA activada"
+        self.resultado_ia = "Esperando lectura"
+        self.boton_ia.config(text="Desactivar IA")
+        self._publicar_mqtt(self.T_CMD_INICIAR_OP, "off")
+        self._publicar_mqtt(self.T_CMD_MODO_SISTEMA, "ia")
+        self._publicar_mqtt(self.T_CMD_IA_ESTADO, "on")
+        self.actualizar_panel_mensajes()
+        self.actualizar_panel_ia()
+
+    def desactivar_ia_desde_controlador(self):
+        """Apaga IA y deja ESP32 en reposo seguro."""
+
+        self.ia_activa = False
+        self.estado_sistema = "IA apagada"
+        self.resultado_ia = "IA apagada"
+        self.boton_ia.config(text="Activar IA")
+        self._publicar_mqtt(self.T_CMD_IA_ESTADO, "off")
+        self._publicar_mqtt(self.T_CMD_MODO_SISTEMA, "reposo")
+        self._publicar_mqtt(self.T_CMD_SEGURO, "on")
+        self.actualizar_panel_mensajes()
+        self.actualizar_panel_ia()
+
+    def alternar_ia(self):
+        """Compatibilidad: el controlador nuevo maneja el arranque real de IA."""
+
+        if self.ia_activa:
+            self.desactivar_ia_desde_controlador()
+        else:
+            self.activar_ia_desde_controlador()
 
     def cambiar_grados(self, cambio):
         """
@@ -751,6 +828,8 @@ class VistaPantalla:
         joystick_base=None,
         direccion_base=None,
         error_sistema=None,
+        resultado_ia=None,
+        alerta_ultima=None,
     ):
         """
         Parámetros:
@@ -818,7 +897,46 @@ class VistaPantalla:
         if error_sistema is not None:
             self.error_sistema = str(error_sistema)
 
+        if resultado_ia is not None:
+            self._procesar_resultado_ia_interfaz(resultado_ia)
+
+        if alerta_ultima is not None:
+            self.alerta_ultima = str(alerta_ultima)
+
         self.actualizar_panel_mensajes()
+        self.actualizar_panel_ia()
+
+    def _procesar_resultado_ia_interfaz(self, resultado_ia):
+        """Convierte el JSON de IA en texto visible para la pestaña Captura."""
+
+        texto = str(resultado_ia)
+
+        try:
+            datos = json.loads(texto)
+            lectura = str(datos.get("lectura", "sin_lectura"))
+            clase = str(datos.get("clase", "Sin lectura"))
+            confianza = datos.get("confianza", 0)
+
+            self.resultado_ia = f"{lectura.upper()} | {clase} | {confianza}"
+
+            if str(datos.get("estado_ia", "")).lower() == "apagada":
+                self.ia_activa = False
+                try:
+                    self.boton_ia.config(text="Activar IA")
+                except Exception:
+                    pass
+
+        except Exception:
+            self.resultado_ia = texto
+
+    def actualizar_panel_ia(self):
+        """Actualiza el texto del resultado IA en Captura si existe."""
+
+        try:
+            self.lbl_resultado_ia.config(text=f"Resultado IA: {self.resultado_ia}")
+            self.lbl_alerta_ia.config(text=f"Alerta: {self.alerta_ultima}")
+        except Exception:
+            pass
 
     def actualizar_panel_mensajes(self):
         """Actualiza las lecturas y mensajes según datos actuales."""
@@ -870,30 +988,25 @@ class VistaPantalla:
             detalle_dist = "esperando conexión"
             color_dist = self.COLOR_GRIS
 
-        elif 0 <= distancia <= 25:
+        elif distancia <= 10:
             titulo_dist = f"• {distancia:.0f} cm de distancia"
-            detalle_dist = "Aléjese un poco del sistema"
+            detalle_dist = "Muy cerca, aléjese unos centímetros"
             color_dist = self.COLOR_ROJO
 
-        elif 26 <= distancia <= 35:
+        elif 15 <= distancia <= 20:
             titulo_dist = f"• {distancia:.0f} cm de distancia"
             detalle_dist = "Distancia adecuada"
             color_dist = self.COLOR_AZUL
 
-        elif 36 <= distancia <= 50:
+        elif distancia > 20:
             titulo_dist = f"• {distancia:.0f} cm de distancia"
-            detalle_dist = "Acérquese un poco al sistema"
-            color_dist = self.COLOR_AMARILLO
-
-        elif distancia > 50:
-            titulo_dist = f"• {distancia:.0f} cm de distancia"
-            detalle_dist = "Acérquese un poco al sistema"
+            detalle_dist = "Está lejos, acérquese un poco"
             color_dist = self.COLOR_AMARILLO
 
         else:
-            titulo_dist = "• distancia inválida"
-            detalle_dist = "revise el sensor ultrasónico"
-            color_dist = self.COLOR_GRIS
+            titulo_dist = f"• {distancia:.0f} cm de distancia"
+            detalle_dist = "Ajuste su distancia al sistema"
+            color_dist = self.COLOR_AMARILLO
 
         self.lbl_msg_distancia_titulo.config(text=titulo_dist, fg=color_dist)
         self.lbl_msg_distancia_detalle.config(text=detalle_dist)
@@ -998,7 +1111,7 @@ class VistaPantalla:
         # Botón abrir cámara.
         # ---------------------------------------------------------------------
 
-        self.ruta_imagen_boton_inicio = "./Detalles_de_pantalla/abierto.png"
+        self.ruta_imagen_boton_inicio = self._ruta_interfaz("Detalles_de_pantalla", "abierto.png")
         self.imagen_boton_inicio = self._cargar_photoimage(
             self.ruta_imagen_boton_inicio,
             90,
@@ -1017,7 +1130,7 @@ class VistaPantalla:
         # Botón cerrar cámara.
         # ---------------------------------------------------------------------
 
-        self.ruta_imagen_boton_fin = "./Detalles_de_pantalla/cerrar.png"
+        self.ruta_imagen_boton_fin = self._ruta_interfaz("Detalles_de_pantalla", "cerrar.png")
         self.imagen_boton_fin = self._cargar_photoimage(
             self.ruta_imagen_boton_fin,
             90,
@@ -1036,7 +1149,7 @@ class VistaPantalla:
         # Botones grabación.
         # ---------------------------------------------------------------------
 
-        self.ruta_imagen_boton_iniciar_grabacion = "./Detalles_de_pantalla/captura.png"
+        self.ruta_imagen_boton_iniciar_grabacion = self._ruta_interfaz("Detalles_de_pantalla", "captura.png")
         self.imagen_boton_iniciar_grabacion = self._cargar_photoimage(
             self.ruta_imagen_boton_iniciar_grabacion,
             90,
@@ -1052,7 +1165,7 @@ class VistaPantalla:
         self.boton_iniciar_grabacion.place(x=25, y=103, width=90, height=50)
         self.boton_iniciar_grabacion.config(state=tk.DISABLED)
 
-        self.ruta_imagen_boton_detener_grabacion = "./Detalles_de_pantalla/parar.png"
+        self.ruta_imagen_boton_detener_grabacion = self._ruta_interfaz("Detalles_de_pantalla", "parar.png")
         self.imagen_boton_detener_grabacion = self._cargar_photoimage(
             self.ruta_imagen_boton_detener_grabacion,
             90,
@@ -1081,7 +1194,7 @@ class VistaPantalla:
         # Filtros.
         # ---------------------------------------------------------------------
 
-        self.ruta_imagen_boton_rgb = "./Detalles_de_pantalla/rgb.png"
+        self.ruta_imagen_boton_rgb = self._ruta_interfaz("Detalles_de_pantalla", "rgb.png")
         self.imagen_boton_rgb = self._cargar_photoimage(
             self.ruta_imagen_boton_rgb,
             200,
@@ -1096,7 +1209,7 @@ class VistaPantalla:
         )
         self.boton_rgb.place(x=25, y=184, width=200, height=40)
 
-        self.ruta_imagen_boton_grises = "./Detalles_de_pantalla/grises.png"
+        self.ruta_imagen_boton_grises = self._ruta_interfaz("Detalles_de_pantalla", "grises.png")
         self.imagen_boton_grises = self._cargar_photoimage(
             self.ruta_imagen_boton_grises,
             200,
@@ -1111,7 +1224,7 @@ class VistaPantalla:
         )
         self.boton_grises.place(x=25, y=228, width=200, height=40)
 
-        self.ruta_imagen_boton_canny = "./Detalles_de_pantalla/canny.png"
+        self.ruta_imagen_boton_canny = self._ruta_interfaz("Detalles_de_pantalla", "canny.png")
         self.imagen_boton_canny = self._cargar_photoimage(
             self.ruta_imagen_boton_canny,
             200,
@@ -1189,6 +1302,26 @@ class VistaPantalla:
             height=self.VIDEO_ALTO
         )
 
+        self.lbl_resultado_ia = tk.Label(
+            self.pagina_captura,
+            text="Resultado IA: Sin lectura",
+            font=("Calibri", 8, "bold"),
+            bg=self.COLOR_BLANCO,
+            fg=self.COLOR_TEXTO,
+            anchor="w",
+        )
+        self.lbl_resultado_ia.place(x=320, y=286, width=360, height=16)
+
+        self.lbl_alerta_ia = tk.Label(
+            self.pagina_captura,
+            text="Alerta: Sin alertas",
+            font=("Calibri", 8),
+            bg=self.COLOR_BLANCO,
+            fg=self.COLOR_GRIS,
+            anchor="w",
+        )
+        self.lbl_alerta_ia.place(x=320, y=302, width=360, height=16)
+
         # ---------------------------------------------------------------------
         # Botones inferiores.
         # Solo estos tienen texto visible.
@@ -1207,6 +1340,7 @@ class VistaPantalla:
             relief="solid",
             bd=1,
             cursor="hand2",
+            command=self.alternar_ia,
         )
         self.boton_ia.place(x=320, y=320, width=165, height=35)
 
@@ -1333,3 +1467,4 @@ if __name__ == "__main__":
     app.configurar_publicador_mqtt(publicar_prueba)
     app.iniciar()
     
+

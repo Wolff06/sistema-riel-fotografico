@@ -1,17 +1,10 @@
 # =============================================================================
-# PROYECTO: CANMA - Garra Robótica con Cámara e IA
-#
-# ARCHIVO:
-# sistema/raspberry/comunicacion/mqtt_bridge.py
+# PROYECTO: CANMA - Garra Robotica con Camara e IA
+# ARCHIVO: sistema/raspberry/comunicacion/mqtt_bridge.py
 #
 # OBJETIVO:
-# Conectar la interfaz de Raspberry con el broker Mosquitto.
-# Este archivo recibe datos MQTT publicados por el ESP32 y actualiza la interfaz.
-# También permite que la interfaz publique comandos MQTT hacia el ESP32.
-#
-# FLUJO:
-# ESP32 → Mosquitto → mqtt_bridge.py → vista_pantalla.py
-# vista_pantalla.py → mqtt_bridge.py → Mosquitto → ESP32
+# Conectar la interfaz con Mosquitto. Recibe datos del ESP32 y de la IA,
+# actualiza Tkinter y publica comandos hacia ESP32/IA.
 # =============================================================================
 
 import time
@@ -25,19 +18,10 @@ except ImportError:
 
 class MQTTBridge:
     """
-    Clase encargada de la comunicación MQTT entre Raspberry y ESP32.
-
-    Responsabilidades:
-      - Conectarse al broker Mosquitto.
-      - Suscribirse a los tópicos publicados por el ESP32.
-      - Actualizar la interfaz de forma segura.
-      - Publicar comandos cuando la interfaz lo solicite.
+    Puente MQTT entre Raspberry, ESP32, IA e interfaz.
     """
 
-    # =========================================================================
-    # TÓPICOS QUE RECIBE LA RASPBERRY DESDE EL ESP32
-    # =========================================================================
-
+    # Datos recibidos desde ESP32.
     T_SISTEMA_ESTADO = "sistema/estado"
     T_SISTEMA_ERROR = "sistema/error"
 
@@ -49,48 +33,34 @@ class MQTTBridge:
     T_ACTUADOR_BASE_GRADOS = "sistema/actuadores/base/grados"
     T_ACTUADOR_BRAZO_GRADOS = "sistema/actuadores/brazo/grados"
 
-    # =========================================================================
-    # TÓPICOS QUE LA RASPBERRY PUBLICA HACIA EL ESP32
-    # =========================================================================
+    # Datos publicados por IA.
+    T_IA_RESULTADO = "sistema/ia/resultado"
+    T_ALERTA_ULTIMA = "sistema/alertas/ultima"
 
+    # Comandos hacia ESP32 / IA.
     T_CMD_INICIAR_OP = "sistema/cmd/iniciar"
     T_CMD_BASE_MOVER = "sistema/cmd/base/mover"
     T_CMD_BRAZO_MOVER = "sistema/cmd/brazo/mover"
     T_CMD_SEGURO = "sistema/cmd/seguro"
+    T_CMD_MODO_SISTEMA = "sistema/cmd/modo"
+    T_CMD_IA_ESTADO = "sistema/cmd/ia/estado"
 
     T_CMD_LED_AZUL = "sistema/cmd/led/azul/estado"
     T_CMD_BUZZER = "sistema/cmd/buzzer/senal"
 
-    def __init__(
-        self,
-        vista=None,
-        host="192.168.4.1",
-        puerto=1884,
-        usuario="admin",
-        clave="123",
-        cliente_id="raspberry_interfaz_canma"
-    ):
+    def __init__(self, vista=None, host="192.168.4.1", puerto=1884, usuario="admin", clave="123", cliente_id="raspberry_interfaz_canma"):
         """
-        Parámetros:
+        Parametros:
             vista: instancia de VistaPantalla.
-            host: IP del broker Mosquitto.
+            host: IP de Mosquitto.
             puerto: puerto MQTT.
             usuario: usuario MQTT.
-            clave: contraseña MQTT.
-            cliente_id: identificador del cliente MQTT.
-
-        Hace:
-            Prepara el cliente MQTT, pero no se conecta todavía.
-
-        Devuelve:
-            Nada.
+            clave: clave MQTT.
+            cliente_id: identificador del cliente.
         """
 
         if mqtt is None:
-            raise ImportError(
-                "No está instalado paho-mqtt. Instala con: "
-                "python3 -m pip install paho-mqtt"
-            )
+            raise ImportError("No esta instalado paho-mqtt. Instala con: python3 -m pip install paho-mqtt")
 
         self.vista = vista
         self.host = host
@@ -105,27 +75,17 @@ class MQTTBridge:
         self.cliente = self._crear_cliente_mqtt()
 
         if self.usuario:
-            self.cliente.username_pw_set(
-                username=self.usuario,
-                password=self.clave
-            )
+            self.cliente.username_pw_set(username=self.usuario, password=self.clave)
 
         self.cliente.on_connect = self._on_connect
         self.cliente.on_message = self._on_message
         self.cliente.on_disconnect = self._on_disconnect
 
-    # =========================================================================
-    # CREACIÓN Y CONTROL DEL CLIENTE MQTT
-    # =========================================================================
-
+    # ------------------------------------------------------------------
     def _crear_cliente_mqtt(self):
         """
         Hace:
-            Crea el cliente MQTT de forma compatible con versiones recientes
-            y antiguas de paho-mqtt.
-
-        Devuelve:
-            Cliente MQTT.
+            Crea cliente MQTT compatible con paho nuevo y viejo.
         """
 
         try:
@@ -139,29 +99,24 @@ class MQTTBridge:
             except Exception:
                 return mqtt.Client(self.cliente_id)
 
+    # ------------------------------------------------------------------
     def iniciar(self):
         """
         Hace:
-            Conecta al broker Mosquitto y arranca el loop MQTT en segundo plano.
-
-        Devuelve:
-            Nada.
+            Conecta a Mosquitto e inicia loop en segundo plano.
         """
 
         print("Conectando a Mosquitto...")
         print("Broker:", self.host)
         print("Puerto:", self.puerto)
-
         self.cliente.connect(self.host, self.puerto, 60)
         self.cliente.loop_start()
 
+    # ------------------------------------------------------------------
     def detener(self):
         """
         Hace:
-            Detiene el loop MQTT y desconecta el cliente.
-
-        Devuelve:
-            Nada.
+            Detiene MQTT.
         """
 
         try:
@@ -170,21 +125,15 @@ class MQTTBridge:
         except Exception as error:
             print("Error al detener MQTT:", error)
 
+    # ------------------------------------------------------------------
     def publicar(self, topico, mensaje):
         """
-        Parámetros:
-            topico: tópico MQTT.
+        Parametros:
+            topico: topico MQTT.
             mensaje: mensaje a publicar.
-
-        Hace:
-            Publica un comando hacia el broker Mosquitto.
-
-        Devuelve:
-            Nada.
         """
 
         mensaje = str(mensaje)
-
         print("PUBLICANDO MQTT:", topico, mensaje)
 
         try:
@@ -192,53 +141,36 @@ class MQTTBridge:
         except Exception as error:
             print("Error publicando MQTT:", error)
 
-    # =========================================================================
-    # CALLBACKS MQTT
-    # =========================================================================
-
+    # ------------------------------------------------------------------
     def _on_connect(self, client, userdata, flags, rc):
         """
-        Callback ejecutado cuando Raspberry se conecta al broker.
-
-        rc = 0 significa conexión correcta.
+        Callback de conexion.
         """
 
         if rc == 0:
             self.conectado = True
             print("MQTT conectado correctamente")
-
             self._suscribir_topicos()
-
-            self._actualizar_vista_seguro(
-                estado_sistema="MQTT conectado"
-            )
-
+            self._actualizar_vista_seguro(estado_sistema="MQTT conectado")
         else:
             self.conectado = False
-            print("Error de conexión MQTT. Código:", rc)
+            print("Error de conexion MQTT. Codigo:", rc)
+            self._actualizar_vista_seguro(estado_sistema="Error MQTT")
 
-            self._actualizar_vista_seguro(
-                estado_sistema="Error MQTT"
-            )
-
+    # ------------------------------------------------------------------
     def _on_disconnect(self, client, userdata, rc=None):
         """
-        Callback ejecutado cuando se pierde la conexión MQTT.
+        Callback de desconexion.
         """
 
         self.conectado = False
         print("MQTT desconectado")
+        self._actualizar_vista_seguro(estado_sistema="MQTT desconectado")
 
-        self._actualizar_vista_seguro(
-            estado_sistema="MQTT desconectado"
-        )
-
+    # ------------------------------------------------------------------
     def _on_message(self, client, userdata, msg):
         """
-        Callback ejecutado cuando llega un mensaje MQTT.
-
-        Hace:
-            Interpreta el tópico recibido y actualiza la interfaz.
+        Callback de mensaje recibido.
         """
 
         topico = msg.topic
@@ -250,72 +182,43 @@ class MQTTBridge:
 
         tiempo = datetime.now().strftime("%H:%M:%S")
         self.ultimo_mensaje = (topico, mensaje)
-
-        print(f"[{tiempo}] {topico}: {mensaje}")
-
-        # ---------------------------------------------------------------------
-        # Estado general del sistema.
-        # ---------------------------------------------------------------------
+        print("[{}] {}: {}".format(tiempo, topico, mensaje))
 
         if topico == self.T_SISTEMA_ESTADO:
-            self._actualizar_vista_seguro(
-                estado_sistema=mensaje
-            )
+            self._actualizar_vista_seguro(estado_sistema=mensaje)
 
         elif topico == self.T_SISTEMA_ERROR:
-            self._actualizar_vista_seguro(
-                error_sistema=mensaje
-            )
-
-        # ---------------------------------------------------------------------
-        # Sensores.
-        # ---------------------------------------------------------------------
+            self._actualizar_vista_seguro(error_sistema=mensaje)
 
         elif topico == self.T_SENSOR_PIR:
-            self._actualizar_vista_seguro(
-                movimiento_usuario=mensaje
-            )
+            self._actualizar_vista_seguro(movimiento_usuario=mensaje)
 
         elif topico == self.T_SENSOR_ULTRASONICO:
-            self._actualizar_vista_seguro(
-                distancia_cm=mensaje
-            )
+            self._actualizar_vista_seguro(distancia_cm=mensaje)
 
         elif topico == self.T_SENSOR_JOYSTICK_BASE:
-            self._actualizar_vista_seguro(
-                joystick_base=mensaje
-            )
+            self._actualizar_vista_seguro(joystick_base=mensaje)
 
         elif topico == self.T_SENSOR_DIRECCION_BASE:
-            self._actualizar_vista_seguro(
-                direccion_base=mensaje
-            )
-
-        # ---------------------------------------------------------------------
-        # Posiciones de actuadores.
-        # ---------------------------------------------------------------------
+            self._actualizar_vista_seguro(direccion_base=mensaje)
 
         elif topico == self.T_ACTUADOR_BASE_GRADOS:
-            self._actualizar_vista_seguro(
-                grados_camara=mensaje
-            )
+            self._actualizar_vista_seguro(grados_camara=mensaje)
 
         elif topico == self.T_ACTUADOR_BRAZO_GRADOS:
-            # Por ahora la interfaz muestra los grados de la cámara/base.
-            # Si después agregan tarjeta del brazo, aquí se puede actualizar.
             pass
 
-    # =========================================================================
-    # SUSCRIPCIONES
-    # =========================================================================
+        elif topico == self.T_IA_RESULTADO:
+            self._actualizar_vista_seguro(resultado_ia=mensaje)
 
+        elif topico == self.T_ALERTA_ULTIMA:
+            self._actualizar_vista_seguro(alerta_ultima=mensaje)
+
+    # ------------------------------------------------------------------
     def _suscribir_topicos(self):
         """
         Hace:
-            Suscribe la Raspberry a todos los tópicos necesarios del ESP32.
-
-        Devuelve:
-            Nada.
+            Suscribe a topicos de sensores, actuadores, IA y alertas.
         """
 
         topicos = [
@@ -327,30 +230,19 @@ class MQTTBridge:
             self.T_SENSOR_DIRECCION_BASE,
             self.T_ACTUADOR_BASE_GRADOS,
             self.T_ACTUADOR_BRAZO_GRADOS,
+            self.T_IA_RESULTADO,
+            self.T_ALERTA_ULTIMA,
         ]
 
         for topico in topicos:
             self.cliente.subscribe(topico)
             print("Suscrito a:", topico)
 
-        # También se puede escuchar todo para depuración:
-        # self.cliente.subscribe("sistema/#")
-
-    # =========================================================================
-    # ACTUALIZACIÓN SEGURA DE TKINTER
-    # =========================================================================
-
+    # ------------------------------------------------------------------
     def _actualizar_vista_seguro(self, **datos):
         """
-        Parámetros:
-            datos: argumentos que se enviarán a vista.actualizar_datos_esp32().
-
         Hace:
-            Actualiza la interfaz usando pantalla.after() para evitar errores
-            por actualizar Tkinter desde el hilo de MQTT.
-
-        Devuelve:
-            Nada.
+            Actualiza Tkinter desde el hilo principal usando after.
         """
 
         if self.vista is None:
@@ -367,56 +259,37 @@ class MQTTBridge:
         except Exception as error:
             print("Error actualizando la vista:", error)
 
-    # =========================================================================
-    # MÉTODOS ÚTILES PARA USAR DESDE OTRAS PARTES
-    # =========================================================================
-
+    # ------------------------------------------------------------------
     def enviar_on(self):
-        """
-        Solicita al ESP32 entrar en estado OPERANDO.
-        """
-
+        self.publicar(self.T_CMD_MODO_SISTEMA, "sensores")
         self.publicar(self.T_CMD_INICIAR_OP, "on")
 
     def enviar_off(self):
-        """
-        Solicita al ESP32 volver a estado ESPERA.
-        """
-
         self.publicar(self.T_CMD_INICIAR_OP, "off")
+        self.publicar(self.T_CMD_MODO_SISTEMA, "reposo")
+
+    def activar_ia(self):
+        self.publicar(self.T_CMD_INICIAR_OP, "off")
+        self.publicar(self.T_CMD_MODO_SISTEMA, "ia")
+        self.publicar(self.T_CMD_IA_ESTADO, "on")
+
+    def desactivar_ia(self):
+        self.publicar(self.T_CMD_IA_ESTADO, "off")
+        self.publicar(self.T_CMD_MODO_SISTEMA, "reposo")
+        self.publicar(self.T_CMD_SEGURO, "on")
 
     def mover_base(self, angulo):
-        """
-        Solicita al ESP32 mover la base al ángulo indicado.
-        """
-
         self.publicar(self.T_CMD_BASE_MOVER, str(angulo))
 
     def estado_seguro(self):
-        """
-        Solicita al ESP32 activar estado seguro.
-        """
-
         self.publicar(self.T_CMD_SEGURO, "on")
 
     def probar_led_azul(self):
-        """
-        Enciende LED azul como prueba.
-        """
-
         self.publicar(self.T_CMD_LED_AZUL, "blink")
 
     def probar_buzzer(self):
-        """
-        Activa buzzer como prueba.
-        """
-
         self.publicar(self.T_CMD_BUZZER, "lista")
 
-
-# =============================================================================
-# PRUEBA DIRECTA DEL BRIDGE
-# =============================================================================
 
 if __name__ == "__main__":
     bridge = MQTTBridge()
@@ -433,3 +306,4 @@ if __name__ == "__main__":
 
     finally:
         bridge.detener()
+

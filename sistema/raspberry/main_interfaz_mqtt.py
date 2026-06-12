@@ -77,6 +77,7 @@ def main():
     # Estado seguro → publique sistema/cmd/seguro
 
     vista.configurar_publicador_mqtt(bridge.publicar)
+    modelo.configurar_publicador_mqtt(bridge.publicar)
 
     # -------------------------------------------------------------------------
     # Iniciar MQTT e interfaz

@@ -1,15 +1,11 @@
+# -*- coding: utf-8 -*-
 # =============================================================================
-# PROYECTO: CANMA - Garra Robótica con Cámara e IA
+# PROYECTO: CANMA - Garra Robotica con Camara e IA
+# ARCHIVO: sistema/esp32/nucleo/maquina_estado.py
 #
-# - OBJETIVO DEL CÓDIGO -
-# Gestionar los estados principales del ESP32, inicializando la conexión WiFi,
-# la conexión MQTT y el hardware del sistema. También supervisa sensores,
-# controla actuadores mediante la HAL y publica datos reales hacia Mosquitto.
-#
-# - INTEGRANTES -
-# Macias Campos Ariadne Lizett
-# Soto Garnica Ari Adair
-# Lira Gamiño Luis Fernando
+# OBJETIVO:
+# Gestionar WiFi, MQTT, sensores, actuadores y modo IA usando la HAL.
+# Este archivo NO usa Pin, PWM ni ADC directamente.
 # =============================================================================
 
 import time
@@ -29,33 +25,23 @@ ESTADO_OPERANDO = 3
 ESTADO_ERROR = 99
 
 
-# =============================================================================
-# CLASE: MaquinaEstado
-# =============================================================================
-
 class MaquinaEstado:
     """
     Controla el ciclo principal del ESP32.
 
-    Responsabilidades:
-      - Conectar WiFi.
-      - Conectar MQTT.
-      - Instanciar sensores y actuadores mediante HAL.
-      - Publicar datos reales por MQTT.
-      - Recibir comandos MQTT para actuadores.
-      - Cambiar entre BOOT, ESPERA, OPERANDO y ERROR.
+    Modos internos:
+    - reposo: LEDs y buzzer apagados.
+    - sensores: LEDs y buzzer dependen de PIR + ultrasonico.
+    - ia: LEDs y buzzer dependen del resultado publicado por la IA.
     """
 
     def __init__(self):
         """
-        Parámetros:
+        Parametros:
             Ninguno.
 
         Hace:
-            Inicializa las variables principales de la máquina de estados.
-
-        Devuelve:
-            Nada.
+            Inicializa variables internas.
         """
 
         self.estado = ESTADO_BOOT
@@ -64,54 +50,59 @@ class MaquinaEstado:
         self._sensores = None
         self.mqttBroker = None
 
-        # Control de publicación para no saturar MQTT
         self._ultimo_envio_ms = 0
         self._intervalo_envio_ms = 500
-
-        # Control para no publicar estado repetido demasiadas veces
         self._ultimo_estado_publicado = None
 
-    # -------------------------------------------------------------------------
+        # Modo activo: reposo, sensores o ia.
+        self.modo_sistema = "reposo"
+        self.ia_activa = False
+
+        # Estado fisico que se mantiene en el ciclo para LEDs/buzzer.
+        # Valores esperados: APAGADO, ROJO, AMARILLO, AZUL.
+        self._estado_salida = "APAGADO"
+        self._ultimo_estado_salida = None
+
+        # Logica de movimiento basada en el codigo de Thonny.
+        self._distancia_anterior = None
+        self._ultimo_cambio_distancia = 0
+        self._movimiento_usuario = False
+
+        self.DISTANCIA_MUY_CERCA = 10
+        self.DISTANCIA_IDEAL_MIN = 15
+        self.DISTANCIA_IDEAL_MAX = 20
+        self.CAMBIO_MAXIMO_PERMITIDO = 6
+
+        # Joystick/base.
+        self.INVERTIR_BASE = False
+
+    # ---------------------------------------------------------------------
     def transicion(self, nuevo_estado):
         """
-        Parámetros:
-            nuevo_estado: estado al que se desea cambiar.
+        Parametros:
+            nuevo_estado: nuevo estado del sistema.
 
         Hace:
-            Cambia el estado interno del sistema.
-
-        Devuelve:
-            Nada.
+            Cambia el estado interno.
         """
 
         print("Transicionando a", nuevo_estado)
         self.estado = nuevo_estado
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def boot(self):
         """
-        Parámetros:
-            Ninguno.
-
         Hace:
-            Conecta el ESP32 a WiFi, conecta MQTT, configura callback,
-            inicializa sensores y actuadores mediante la HAL, publica valores
-            iniciales y se suscribe a comandos.
-
-        Devuelve:
-            Nada.
+            Conecta WiFi, MQTT, inicializa sensores/actuadores y pasa a espera.
         """
 
         if comms.conectar_wifi(comms.config.SSID, comms.config.CLAVE):
-
-            # Instanciar hardware primero para que el callback pueda usarlo.
             self._sensores = hardware.CajaSensores()
             self._actuadores = hardware.CajaActuadores()
 
-            # Posición inicial segura de la base.
             self._actuadores.mover_base(90)
+            self._actuadores.estado_seguro()
 
-            # Conexión al broker Mosquitto.
             self.mqttBroker = comms.MQTTLink(
                 comms.config.SERVIDOR_MQTT,
                 comms.config.PUERTO_MQTT,
@@ -120,16 +111,10 @@ class MaquinaEstado:
             )
 
             self.mqttBroker.establecer_conexion_mqtt(callback=self._callback_mqtt)
-
-            # Suscripciones MQTT.
             self._suscribir_comandos()
 
-            # Publicaciones iniciales.
             self._publicar_estado("Iniciando")
             self._publicar_valores_iniciales()
-
-            # Señal física de inicio.
-            self._ejecutar_senal("lista")
 
             self.transicion(ESTADO_ESPERA)
             self._publicar_estado("Esperando instrucciones")
@@ -137,22 +122,16 @@ class MaquinaEstado:
         else:
             self.transicion(ESTADO_ERROR)
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def espera(self):
         """
-        Parámetros:
-            Ninguno.
-
         Hace:
-            Mantiene el sistema en espera. Publica sensores, escucha comandos
-            MQTT y no mueve la base con joystick hasta entrar en OPERANDO.
-
-        Devuelve:
-            Nada.
+            Publica sensores y escucha MQTT. En modo IA mantiene activo el
+            patron de LEDs/buzzer segun el ultimo resultado de IA.
         """
 
         if not comms.verificar_conexion():
-            print("Conexión perdida en modo espera, reconectando...")
+            print("Conexion perdida en modo espera, reconectando...")
 
             if comms.conectar_wifi(comms.config.SSID, comms.config.CLAVE):
                 self.transicion(ESTADO_ESPERA)
@@ -160,30 +139,31 @@ class MaquinaEstado:
             else:
                 self.transicion(ESTADO_ERROR)
 
-        else:
-            self._publicar_estado("Esperando instrucciones")
-            self._publicar_datos_sensores()
-            self._checar_mqtt()
+            return
 
-    # -------------------------------------------------------------------------
+        self._publicar_estado("Esperando instrucciones")
+        self._publicar_datos_sensores()
+
+        # Si la IA esta activa, los sensores no controlan LEDs/buzzer.
+        # Solo se mantiene el resultado fisico de IA.
+        if self.modo_sistema == "ia":
+            self._actualizar_salida_fisica()
+
+        self._checar_mqtt()
+
+    # ---------------------------------------------------------------------
     def operando(self):
         """
-        Parámetros:
-            Ninguno.
-
         Hace:
-            Lee sensores, mueve la base según el joystick, publica datos por
-            MQTT y escucha comandos remotos.
-
-        Devuelve:
-            Nada.
+            En modo sensores, mueve servo con joystick y aplica logica de
+            distancia/movimiento. En modo IA no deja que sensores controlen
+            LEDs/buzzer.
         """
 
         if not comms.verificar_conexion():
-            print("Conexión perdida durante operación. Abortando...")
-
+            print("Conexion perdida durante operacion. Abortando...")
             self._publicar_estado("Abortando")
-            self._publicar_error("Conexión perdida con el servidor")
+            self._publicar_error("Conexion perdida con el servidor")
 
             if self._actuadores is not None:
                 self._actuadores.estado_seguro()
@@ -194,37 +174,50 @@ class MaquinaEstado:
             else:
                 self.transicion(ESTADO_ERROR)
 
+            return
+
+        self._publicar_estado("Operando")
+        resumen = self._sensores.obtener_resumen()
+
+        # El joystick puede seguir moviendo la base cuando el sistema esta en ON.
+        joystick = resumen.get("joystick_base", 0)
+        self._actuadores.mover_base_desde_joystick(
+            joystick,
+            paso=1,
+            minimo=0,
+            maximo=180,
+            invertir=self.INVERTIR_BASE
+        )
+
+        if self.modo_sistema == "sensores":
+            estado_fisico, cambio, movimiento_usuario = self._calcular_estado_sensores(resumen)
+            self._estado_salida = estado_fisico
+            self._actualizar_salida_fisica()
+        elif self.modo_sistema == "ia":
+            # En modo IA se ignora la logica fisica de sensores.
+            cambio = self._ultimo_cambio_distancia
+            movimiento_usuario = False
+            self._actualizar_salida_fisica()
         else:
-            self._publicar_estado("Operando")
+            cambio = self._ultimo_cambio_distancia
+            movimiento_usuario = False
+            self._estado_salida = "APAGADO"
+            self._actualizar_salida_fisica()
 
-            # Leer joystick desde la HAL.
-            direccion = self._sensores.obtener_direccion_joystick_base()
+        self._publicar_datos_sensores(
+            resumen=resumen,
+            estado_fisico=self._estado_salida,
+            cambio_distancia=cambio,
+            movimiento_usuario=movimiento_usuario
+        )
 
-            # Mover base desde la HAL.
-            self._actuadores.mover_base_por_direccion(
-                direccion,
-                paso=1,
-                minimo=0,
-                maximo=180
-            )
+        self._checar_mqtt()
 
-            # Publicar sensores y posición de base.
-            self._publicar_datos_sensores()
-
-            # Escuchar comandos MQTT.
-            self._checar_mqtt()
-
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def error(self):
         """
-        Parámetros:
-            Ninguno.
-
         Hace:
-            Coloca el sistema en estado seguro y publica el error si MQTT existe.
-
-        Devuelve:
-            Nada.
+            Activa estado seguro y publica error.
         """
 
         print("Estado de error")
@@ -235,18 +228,15 @@ class MaquinaEstado:
         self._publicar_estado("ERROR")
         self._publicar_error("Error en el sistema")
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _callback_mqtt(self, topico, mensaje):
         """
-        Parámetros:
-            topico: tópico MQTT recibido.
-            mensaje: mensaje recibido por MQTT.
+        Parametros:
+            topico: topico recibido.
+            mensaje: mensaje recibido.
 
         Hace:
-            Interpreta comandos entrantes y ejecuta acciones usando la HAL.
-
-        Devuelve:
-            Nada.
+            Procesa comandos MQTT.
         """
 
         topico = self._decodificar(topico)
@@ -254,15 +244,18 @@ class MaquinaEstado:
 
         print("MQTT recibido:", topico, "=", mensaje)
 
-        # ---------------------------------------------------------------------
-        # Comando para iniciar o detener operación.
-        # ---------------------------------------------------------------------
         if topico == comms.T_CMD_INICIAR_OP:
             self._procesar_comando_inicio(mensaje)
 
-        # ---------------------------------------------------------------------
-        # Comandos de servos.
-        # ---------------------------------------------------------------------
+        elif topico == comms.T_CMD_MODO_SISTEMA:
+            self._procesar_modo_sistema(mensaje)
+
+        elif topico == comms.T_CMD_IA_ESTADO:
+            self._procesar_estado_ia(mensaje)
+
+        elif topico == comms.T_IA_RESULTADO:
+            self._procesar_resultado_ia(mensaje)
+
         elif topico == comms.T_CMD_BASE_MOVER:
             self._procesar_comando_servo("base", mensaje)
 
@@ -270,12 +263,8 @@ class MaquinaEstado:
             self._procesar_comando_servo("brazo", mensaje)
 
         elif topico == comms.T_CMD_SERVO_MOVER:
-            # Tópico viejo: por compatibilidad mueve la base.
             self._procesar_comando_servo("base", mensaje)
 
-        # ---------------------------------------------------------------------
-        # Comandos de LED individuales.
-        # ---------------------------------------------------------------------
         elif topico == comms.T_CMD_LED_ESTADO_AZUL:
             self._procesar_comando_led("AZUL", mensaje)
 
@@ -288,60 +277,46 @@ class MaquinaEstado:
         elif topico == comms.T_CMD_LED_PARPADEAR:
             self._procesar_comando_led_parpadear(mensaje)
 
-        # ---------------------------------------------------------------------
-        # Buzzer.
-        # ---------------------------------------------------------------------
         elif topico == comms.T_CMD_BUZZER:
             self._procesar_comando_buzzer(mensaje)
 
-        # ---------------------------------------------------------------------
-        # Estado seguro.
-        # ---------------------------------------------------------------------
         elif topico == comms.T_CMD_SEGURO:
             self._activar_estado_seguro()
 
         else:
-            print("Tópico no manejado:", topico)
+            print("Topico no manejado:", topico)
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _suscribir_comandos(self):
         """
-        Parámetros:
-            Ninguno.
-
         Hace:
-            Suscribe el ESP32 a todos los tópicos de comando necesarios.
-
-        Devuelve:
-            Nada.
+            Suscribe el ESP32 a todos los comandos necesarios.
         """
 
-        self.mqttBroker.suscribir(comms.T_CMD_INICIAR_OP)
+        topicos = [
+            comms.T_CMD_INICIAR_OP,
+            comms.T_CMD_SEGURO,
+            comms.T_CMD_MODO_SISTEMA,
+            comms.T_CMD_IA_ESTADO,
+            comms.T_IA_RESULTADO,
+            comms.T_CMD_BASE_MOVER,
+            comms.T_CMD_BRAZO_MOVER,
+            comms.T_CMD_SERVO_MOVER,
+            comms.T_CMD_LED_ESTADO_AZUL,
+            comms.T_CMD_LED_ESTADO_AMARILLO,
+            comms.T_CMD_LED_ESTADO_ROJO,
+            comms.T_CMD_LED_PARPADEAR,
+            comms.T_CMD_BUZZER,
+        ]
 
-        self.mqttBroker.suscribir(comms.T_CMD_BASE_MOVER)
-        self.mqttBroker.suscribir(comms.T_CMD_BRAZO_MOVER)
-        self.mqttBroker.suscribir(comms.T_CMD_SERVO_MOVER)
+        for topico in topicos:
+            self.mqttBroker.suscribir(topico)
 
-        self.mqttBroker.suscribir(comms.T_CMD_LED_ESTADO_AZUL)
-        self.mqttBroker.suscribir(comms.T_CMD_LED_ESTADO_AMARILLO)
-        self.mqttBroker.suscribir(comms.T_CMD_LED_ESTADO_ROJO)
-        self.mqttBroker.suscribir(comms.T_CMD_LED_PARPADEAR)
-
-        self.mqttBroker.suscribir(comms.T_CMD_BUZZER)
-        self.mqttBroker.suscribir(comms.T_CMD_SEGURO)
-
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _publicar_valores_iniciales(self):
         """
-        Parámetros:
-            Ninguno.
-
         Hace:
-            Publica valores iniciales para que Raspberry/interfaz tengan un
-            estado conocido desde el arranque.
-
-        Devuelve:
-            Nada.
+            Publica valores iniciales.
         """
 
         self._publicar(comms.T_SENSOR_PIR, "false")
@@ -350,19 +325,90 @@ class MaquinaEstado:
         self._publicar(comms.T_SENSOR_DIRECCION_BASE, "CENTRO")
         self._publicar(comms.T_ACTUADOR_BASE_GRADOS, "90")
         self._publicar(comms.T_ACTUADOR_BRAZO_GRADOS, "90")
+        self._publicar(comms.T_ALERTA_ULTIMA, "Sistema en espera")
 
-    # -------------------------------------------------------------------------
-    def _publicar_datos_sensores(self):
+    # ---------------------------------------------------------------------
+    def _calcular_estado_sensores(self, resumen):
         """
-        Parámetros:
-            Ninguno.
+        Parametros:
+            resumen: diccionario de CajaSensores.
 
         Hace:
-            Publica por MQTT las lecturas actuales de sensores y posiciones de
-            actuadores. Usa intervalo para no saturar la red.
+            Aplica la regla solicitada para modo Sensores:
+            - distancia <= 10 cm: ROJO y buzzer rapido.
+            - distancia de 15 a 20 cm: AZUL y buzzer apagado.
+            - distancia mayor a 20 cm: AMARILLO y buzzer suave.
+            - distancia de 11 a 14 cm: AMARILLO para pedir ajuste.
+
+            El PIR solo se reporta como movimiento true/false; no decide LED.
 
         Devuelve:
-            Nada.
+            estado_fisico, cambio_distancia, movimiento_usuario.
+        """
+
+        distancia = resumen.get("distancia_cm", resumen.get("distancia", None))
+        pir_detectado = bool(resumen.get("presencia", False))
+
+        if distancia is not None and distancia > 0:
+            if self._distancia_anterior is not None and self._distancia_anterior > 0:
+                cambio = abs(distancia - self._distancia_anterior)
+            else:
+                cambio = 0
+            self._distancia_anterior = distancia
+        else:
+            cambio = 0
+
+        self._ultimo_cambio_distancia = cambio
+        movimiento_usuario = pir_detectado
+
+        if distancia is None or distancia <= 0:
+            estado_fisico = "AMARILLO"
+        elif distancia <= self.DISTANCIA_MUY_CERCA:
+            estado_fisico = "ROJO"
+        elif self.DISTANCIA_IDEAL_MIN <= distancia <= self.DISTANCIA_IDEAL_MAX:
+            estado_fisico = "AZUL"
+        else:
+            estado_fisico = "AMARILLO"
+
+        self._movimiento_usuario = movimiento_usuario
+        print("Modo sensores:", estado_fisico, "| Distancia:", distancia, "| Cambio:", round(cambio, 1), "| PIR:", pir_detectado)
+        return estado_fisico, cambio, movimiento_usuario
+
+    # ---------------------------------------------------------------------
+    def _actualizar_salida_fisica(self):
+        """
+        Hace:
+            Actualiza LEDs y buzzer de forma no bloqueante.
+            Siempre apaga los otros LEDs antes de encender el color activo.
+        """
+
+        if self._actuadores is None:
+            return
+
+        try:
+            if self._estado_salida == "APAGADO":
+                self._actuadores.estado_seguro()
+                self._ultimo_estado_salida = self._estado_salida
+                return
+
+            if self._estado_salida == "ROJO":
+                self._actuadores.encender_solo_led("ROJO")
+            elif self._estado_salida == "AZUL":
+                self._actuadores.encender_solo_led("AZUL")
+            else:
+                self._actuadores.encender_solo_led("AMARILLO")
+
+            self._actuadores.controlar_buzzer_por_estado(self._estado_salida)
+            self._ultimo_estado_salida = self._estado_salida
+
+        except Exception as error:
+            print("Error actualizando salida fisica:", error)
+
+    # ---------------------------------------------------------------------
+    def _publicar_datos_sensores(self, resumen=None, estado_fisico=None, cambio_distancia=None, movimiento_usuario=None):
+        """
+        Hace:
+            Publica sensores y posicion de servos por MQTT.
         """
 
         actual = time.ticks_ms()
@@ -372,25 +418,34 @@ class MaquinaEstado:
 
         self._ultimo_envio_ms = actual
 
-        resumen = self._sensores.obtener_resumen()
+        if resumen is None:
+            resumen = self._sensores.obtener_resumen()
 
         presencia = resumen.get("presencia", False)
-        distancia = resumen.get("distancia_cm", None)
+        distancia = resumen.get("distancia_cm", resumen.get("distancia", None))
         joystick = resumen.get("joystick_base", 0)
         direccion = resumen.get("direccion_base", "CENTRO")
 
+        if movimiento_usuario is None:
+            movimiento_usuario = self._movimiento_usuario
+
+        if estado_fisico is None:
+            estado_fisico = self._estado_salida
+
+        if cambio_distancia is None:
+            cambio_distancia = self._ultimo_cambio_distancia
+
         angulo_base = self._actuadores.obtener_posicion_base()
 
-        # El brazo puede estar preparado aunque no se use en la demo.
         try:
             angulo_brazo = self._actuadores.obtener_posicion_brazo()
         except Exception:
             angulo_brazo = 90
 
-        presencia_txt = "true" if presencia else "false"
         distancia_txt = "null" if distancia is None else str(round(distancia, 2))
+        movimiento_txt = "true" if movimiento_usuario else "false"
 
-        self._publicar(comms.T_SENSOR_PIR, presencia_txt)
+        self._publicar(comms.T_SENSOR_PIR, movimiento_txt)
         self._publicar(comms.T_SENSOR_ULTRASONICO, distancia_txt)
         self._publicar(comms.T_SENSOR_JOYSTICK_BASE, str(joystick))
         self._publicar(comms.T_SENSOR_DIRECCION_BASE, direccion)
@@ -398,53 +453,167 @@ class MaquinaEstado:
         self._publicar(comms.T_ACTUADOR_BRAZO_GRADOS, str(angulo_brazo))
 
         print(
-            "PIR:", presencia_txt,
+            "Modo:", self.modo_sistema,
+            "| PIR crudo:", presencia,
+            "| Movimiento:", movimiento_txt,
             "| Distancia:", distancia_txt,
+            "| Cambio:", round(cambio_distancia, 1),
+            "| Estado fisico:", estado_fisico,
             "| Joystick:", joystick,
-            "| Dirección:", direccion,
-            "| Base:", angulo_base,
-            "| Brazo:", angulo_brazo
+            "| Direccion:", direccion,
+            "| Base:", angulo_base
         )
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _procesar_comando_inicio(self, mensaje):
         """
-        Parámetros:
-            mensaje: texto del comando de inicio.
-
         Hace:
-            Cambia entre estado OPERANDO y ESPERA.
-
-        Devuelve:
-            Nada.
+            Cambia entre OPERANDO y ESPERA.
         """
 
         mensaje = mensaje.lower()
 
         if mensaje in ("on", "iniciar", "true", "1"):
+            self.modo_sistema = "sensores"
+            self.ia_activa = False
+            self._estado_salida = "APAGADO"
+            self._ultimo_estado_salida = None
+            self._distancia_anterior = None
             self.transicion(ESTADO_OPERANDO)
             self._publicar_estado("Operando")
+            self._publicar(comms.T_ALERTA_ULTIMA, "Modo sensores activo")
 
         elif mensaje in ("off", "detener", "false", "0"):
+            self.modo_sistema = "reposo"
+            self.ia_activa = False
+            self._estado_salida = "APAGADO"
+            self._ultimo_estado_salida = None
+            self._distancia_anterior = None
+
+            if self._actuadores is not None:
+                self._actuadores.estado_seguro()
+
             self.transicion(ESTADO_ESPERA)
             self._publicar_estado("Esperando instrucciones")
+            self._publicar(comms.T_ALERTA_ULTIMA, "Sistema en reposo")
 
         else:
-            self._publicar_error("Comando de inicio inválido")
+            self._publicar_error("Comando de inicio invalido")
 
-    # -------------------------------------------------------------------------
-    def _procesar_comando_servo(self, servomotor, mensaje):
+    # ---------------------------------------------------------------------
+    def _procesar_modo_sistema(self, mensaje):
         """
-        Parámetros:
-            servomotor: "base" o "brazo".
-            mensaje: ángulo como texto o JSON.
+        Hace:
+            Cambia el modo logico: sensores, ia o reposo.
+        """
+
+        modo = mensaje.lower().strip()
+
+        if modo in ("sensores", "sensor"):
+            self.modo_sistema = "sensores"
+            self.ia_activa = False
+            self._estado_salida = "APAGADO"
+            self._ultimo_estado_salida = None
+            self._publicar_estado("Modo sensores")
+
+        elif modo in ("ia", "captura"):
+            self.modo_sistema = "ia"
+            self.ia_activa = True
+            self._estado_salida = "AMARILLO"
+            self._ultimo_estado_salida = None
+            self.transicion(ESTADO_ESPERA)
+            self._publicar_estado("Modo IA")
+            self._publicar(comms.T_ALERTA_ULTIMA, "IA activa, esperando lectura")
+
+        elif modo in ("reposo", "off", "apagado"):
+            self.modo_sistema = "reposo"
+            self.ia_activa = False
+            self._estado_salida = "APAGADO"
+            self._ultimo_estado_salida = None
+
+            if self._actuadores is not None:
+                self._actuadores.estado_seguro()
+
+            self.transicion(ESTADO_ESPERA)
+            self._publicar_estado("Esperando instrucciones")
+            self._publicar(comms.T_ALERTA_ULTIMA, "Sistema en reposo")
+
+        else:
+            self._publicar_error("Modo de sistema invalido")
+
+    # ---------------------------------------------------------------------
+    def _procesar_estado_ia(self, mensaje):
+        """
+        Hace:
+            Activa o apaga modo IA del lado ESP32.
+        """
+
+        mensaje = mensaje.lower().strip()
+
+        if mensaje in ("on", "activar", "true", "1"):
+            self.modo_sistema = "ia"
+            self.ia_activa = True
+            self._estado_salida = "AMARILLO"
+            self._ultimo_estado_salida = None
+            self.transicion(ESTADO_ESPERA)
+            self._publicar_estado("Modo IA")
+            self._publicar(comms.T_ALERTA_ULTIMA, "IA activa, esperando lectura")
+
+        elif mensaje in ("off", "apagar", "false", "0"):
+            self.modo_sistema = "reposo"
+            self.ia_activa = False
+            self._estado_salida = "APAGADO"
+            self._ultimo_estado_salida = None
+
+            if self._actuadores is not None:
+                self._actuadores.estado_seguro()
+
+            self.transicion(ESTADO_ESPERA)
+            self._publicar_estado("IA desactivada")
+            self._publicar(comms.T_ALERTA_ULTIMA, "IA desactivada")
+
+    # ---------------------------------------------------------------------
+    def _procesar_resultado_ia(self, mensaje):
+        """
+        Parametros:
+            mensaje: JSON publicado por ia_processor_mqtt.py.
 
         Hace:
-            Interpreta el ángulo recibido y mueve el servomotor indicado usando
-            la HAL.
+            Convierte resultado IA en actuadores fisicos.
+        """
 
-        Devuelve:
-            Nada.
+        if self.modo_sistema != "ia":
+            print("Resultado IA ignorado porque el modo actual es", self.modo_sistema)
+            return
+
+        try:
+            datos = ujson.loads(mensaje)
+        except Exception:
+            datos = {"lectura": mensaje}
+
+        lectura = str(datos.get("lectura", "sin_lectura")).lower()
+        clase = str(datos.get("clase", "Sin lectura"))
+        confianza = datos.get("confianza", 0)
+
+        if lectura == "herido":
+            self._estado_salida = "ROJO"
+            alerta = "IA: posible hallazgo visual detectado"
+        elif lectura == "ileso":
+            self._estado_salida = "AZUL"
+            alerta = "IA: lectura sin alerta visual"
+        else:
+            self._estado_salida = "AMARILLO"
+            alerta = "IA: sin lectura confiable"
+
+        self._ultimo_estado_salida = None
+        self._actualizar_salida_fisica()
+        self._publicar(comms.T_ALERTA_ULTIMA, alerta + " | " + clase + " | confianza: " + str(confianza))
+
+    # ---------------------------------------------------------------------
+    def _procesar_comando_servo(self, servomotor, mensaje):
+        """
+        Hace:
+            Mueve base o brazo por comando MQTT.
         """
 
         try:
@@ -460,126 +629,89 @@ class MaquinaEstado:
                 self._publicar(comms.T_ACTUADOR_BRAZO_GRADOS, str(angulo_final))
                 print("Brazo movido por MQTT a:", angulo_final)
 
-            else:
-                self._publicar_error("Servomotor no reconocido")
-
         except Exception as error:
             print("Error al mover servo por MQTT:", error)
-            self._publicar_error("Comando de servo inválido")
+            self._publicar_error("Comando de servo invalido")
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _procesar_comando_led(self, led, mensaje):
         """
-        Parámetros:
-            led: "ROJO", "AMARILLO" o "AZUL".
-            mensaje: "on", "off" o "blink".
-
         Hace:
-            Controla el LED indicado usando la HAL.
-
-        Devuelve:
-            Nada.
+            Control manual de LED solo en reposo. En sensores o IA se ignora
+            para evitar que dos logicas controlen LEDs al mismo tiempo.
         """
+
+        if self.modo_sistema != "reposo":
+            print("Comando LED ignorado. Modo activo:", self.modo_sistema)
+            return
 
         mensaje = mensaje.lower()
-
         if mensaje == "on":
-            self._actuadores.encender_led(led)
-
+            self._actuadores.encender_solo_led(led)
         elif mensaje == "off":
             self._actuadores.apagar_led(led)
-
         elif mensaje == "blink":
             self._actuadores.parpadear_led(led)
-
         else:
-            self._publicar_error("Comando de LED inválido")
+            self._publicar_error("Comando de LED invalido")
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _procesar_comando_led_parpadear(self, mensaje):
         """
-        Parámetros:
-            mensaje: JSON con led, veces e intervalo_ms.
-
         Hace:
-            Parpadea el LED solicitado.
-
-        Devuelve:
-            Nada.
+            Parpadea un LED por JSON.
         """
 
         try:
             datos = ujson.loads(mensaje)
-
             led = datos.get("led", "AZUL")
             veces = int(datos.get("veces", 3))
             intervalo_ms = int(datos.get("intervalo_ms", 200))
-
             self._actuadores.parpadear_led(led, veces, intervalo_ms)
-
         except Exception as error:
             print("Error al parpadear LED:", error)
-            self._publicar_error("Comando de parpadeo inválido")
+            self._publicar_error("Comando de parpadeo invalido")
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _procesar_comando_buzzer(self, mensaje):
         """
-        Parámetros:
-            mensaje: "lista", "quieta" o "fin".
-
         Hace:
-            Ejecuta señales sonoras usando la HAL.
-
-        Devuelve:
-            Nada.
+            Ejecuta senales de buzzer.
         """
 
         mensaje = mensaje.lower()
 
         if mensaje == "lista":
             self._ejecutar_senal("lista")
-
         elif mensaje == "quieta":
             self._ejecutar_senal("quieta")
-
         elif mensaje == "fin":
             self._ejecutar_senal("fin")
-
         else:
-            self._publicar_error("Comando de buzzer inválido")
+            self._publicar_error("Comando de buzzer invalido")
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _activar_estado_seguro(self):
         """
-        Parámetros:
-            Ninguno.
-
         Hace:
-            Coloca los actuadores en estado seguro y vuelve a ESPERA.
-
-        Devuelve:
-            Nada.
+            Apaga actuadores y vuelve a espera.
         """
 
         if self._actuadores is not None:
             self._actuadores.estado_seguro()
 
+        self.modo_sistema = "reposo"
+        self.ia_activa = False
+        self._estado_salida = "APAGADO"
+        self._ultimo_estado_salida = None
         self.transicion(ESTADO_ESPERA)
         self._publicar_estado("Estado seguro")
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _extraer_angulo(self, mensaje):
         """
-        Parámetros:
-            mensaje: texto simple o JSON.
-
         Hace:
-            Extrae un ángulo desde:
-              - "90"
-              - {"angulo": 90}
-
-        Devuelve:
-            Ángulo entero entre 0 y 180.
+            Extrae angulo desde texto o JSON.
         """
 
         mensaje = mensaje.strip()
@@ -592,24 +724,16 @@ class MaquinaEstado:
 
         if angulo < 0:
             angulo = 0
-
         if angulo > 180:
             angulo = 180
 
         return angulo
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _ejecutar_senal(self, tipo):
         """
-        Parámetros:
-            tipo: "lista", "quieta" o "fin".
-
         Hace:
-            Ejecuta señales del buzzer. Soporta nombres con ñ y nombres sin ñ,
-            por si después agregan alias en dispositivos.py.
-
-        Devuelve:
-            Nada.
+            Ejecuta senales del buzzer si existen en la HAL.
         """
 
         if self._actuadores is None:
@@ -617,75 +741,42 @@ class MaquinaEstado:
 
         if tipo == "lista":
             metodo = getattr(self._actuadores, "senal_lista", None)
-
-            if metodo is None:
-                metodo = getattr(self._actuadores, "señal_lista", None)
-
             if metodo is not None:
                 metodo()
-
         elif tipo == "quieta":
             metodo = getattr(self._actuadores, "senal_quieta", None)
-
-            if metodo is None:
-                metodo = getattr(self._actuadores, "señal_quieta", None)
-
             if metodo is not None:
                 metodo()
-
         elif tipo == "fin":
             metodo = getattr(self._actuadores, "senal_fin_sesion", None)
-
-            if metodo is None:
-                metodo = getattr(self._actuadores, "señal_fin_sesion", None)
-
             if metodo is not None:
                 metodo()
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _publicar_estado(self, estado):
         """
-        Parámetros:
-            estado: texto del estado.
-
         Hace:
-            Publica el estado solo si cambió, para evitar saturar MQTT.
-
-        Devuelve:
-            Nada.
+            Publica estado si cambio.
         """
 
         if estado != self._ultimo_estado_publicado:
             self._ultimo_estado_publicado = estado
             self._publicar(comms.T_SISTEMA_ESTADO, estado)
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _publicar_error(self, mensaje):
         """
-        Parámetros:
-            mensaje: descripción del error.
-
         Hace:
-            Publica un error por MQTT.
-
-        Devuelve:
-            Nada.
+            Publica un error.
         """
 
         self._publicar(comms.T_SISTEMA_ERROR, mensaje)
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _publicar(self, topico, mensaje):
         """
-        Parámetros:
-            topico: tópico MQTT.
-            mensaje: mensaje a publicar.
-
         Hace:
-            Publica por MQTT si el broker ya fue creado.
-
-        Devuelve:
-            Nada.
+            Publica por MQTT si existe broker.
         """
 
         if self.mqttBroker is not None:
@@ -694,17 +785,11 @@ class MaquinaEstado:
             except Exception as error:
                 print("Error publicando MQTT:", error)
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _checar_mqtt(self):
         """
-        Parámetros:
-            Ninguno.
-
         Hace:
-            Revisa mensajes pendientes del broker MQTT.
-
-        Devuelve:
-            Nada.
+            Revisa mensajes pendientes.
         """
 
         if self.mqttBroker is not None:
@@ -713,20 +798,15 @@ class MaquinaEstado:
             except Exception as error:
                 print("Error revisando mensajes MQTT:", error)
 
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     def _decodificar(self, dato):
         """
-        Parámetros:
-            dato: bytes o texto.
-
         Hace:
-            Convierte bytes a string UTF-8 cuando sea necesario.
-
-        Devuelve:
-            Texto decodificado.
+            Convierte bytes a texto.
         """
 
         if isinstance(dato, bytes):
             return dato.decode("utf-8")
 
         return str(dato)
+
