@@ -31,7 +31,7 @@ PIN_SERVO_BASE = 14
 PIN_SERVO_BRAZO = 23
 
 # Ultrasonico
-ULTRASONICO_TIEMPO_ESPERA_MS = 150
+ULTRASONICO_TIEMPO_ESPERA_MS = 180
 
 
 # =============================================================================
@@ -47,13 +47,26 @@ class CajaSensores:
     - Ultrasonico TRIG GPIO25 y ECHO GPIO26.
     - Joystick VRx en GPIO35.
 
-    Devuelve lecturas interpretadas para que la maquina de estados no use
-    directamente Pin, ADC ni time_pulse_us.
+    Esta version agrega filtros para evitar cambios falsos:
+    - El ultrasonico usa historial, mediana y suavizado.
+    - El joystick se calibra al iniciar y usa zona muerta amplia.
     """
 
     MUESTRAS_PIR = 3
-    LIMITE_JOYSTICK_ALTO = 2500
-    LIMITE_JOYSTICK_BAJO = 1700
+
+    # Filtro del sensor ultrasonico.
+    MUESTRAS_ULTRASONICO = 5
+    DISTANCIA_MINIMA_VALIDA = 2
+    DISTANCIA_MAXIMA_VALIDA = 250
+    CAMBIO_ULTRASONICO_MAXIMO_CM = 35
+
+    # Filtro del joystick.
+    MUESTRAS_JOYSTICK = 5
+    MUESTRAS_CALIBRACION_JOYSTICK = 25
+    JOYSTICK_CENTRO_DEFECTO = 2048
+    JOYSTICK_ZONA_MUERTA = 700
+    JOYSTICK_ZONA_REINGRESO = 450
+    JOYSTICK_CONFIRMACIONES = 2
 
     def __init__(self):
         """
@@ -62,6 +75,7 @@ class CajaSensores:
 
         Hace:
             Inicializa PIR, ultrasonico y joystick.
+            Calibra el centro del joystick al encender.
 
         Devuelve:
             Nada.
@@ -75,13 +89,23 @@ class CajaSensores:
 
         self._ultrasonico_ultima_medida = 0
         self._ultrasonico_ultima_distancia = None
+        self._ultrasonico_distancia_filtrada = None
+        self._historial_ultrasonico = []
 
         self._joystick_base_x = ADC(Pin(PIN_JOYSTICK_BASE_X))
         self._joystick_base_x.atten(ADC.ATTN_11DB)
         self._joystick_base_x.width(ADC.WIDTH_12BIT)
 
+        self._historial_joystick = []
+        self._joystick_centro = self._calibrar_joystick_base()
+        self._joystick_direccion_estable = "CENTRO"
+        self._joystick_direccion_candidata = "CENTRO"
+        self._joystick_conteo_candidata = 0
+
         self._historial_pir = [0] * self.MUESTRAS_PIR
         self._indice_pir = 0
+
+        print("Centro calibrado del joystick:", self._joystick_centro)
 
     # -------------------------------------------------------------------------
     def obtener_presencia(self):
@@ -106,23 +130,14 @@ class CajaSensores:
         return votos >= 1
 
     # -------------------------------------------------------------------------
-    def leer_distancia(self):
+    def _leer_distancia_cruda(self):
         """
-        Parametros:
-            Ninguno.
-
         Hace:
-            Lee el sensor ultrasonico y calcula distancia en cm.
+            Ejecuta el pulso real del sensor ultrasonico.
 
         Devuelve:
-            Distancia en centimetros.
-            None si no hay lectura valida.
+            Distancia cruda en cm o None si la lectura no es valida.
         """
-
-        actual = utime.ticks_ms()
-
-        if utime.ticks_diff(actual, self._ultrasonico_ultima_medida) < ULTRASONICO_TIEMPO_ESPERA_MS:
-            return self._ultrasonico_ultima_distancia
 
         self._ultrasonico_trig.value(0)
         utime.sleep_us(3)
@@ -137,9 +152,79 @@ class CajaSensores:
             duracion = -1
 
         if duracion <= 0:
-            distancia = None
+            return None
+
+        distancia = (duracion * 0.0343) / 2
+
+        if distancia < self.DISTANCIA_MINIMA_VALIDA:
+            return None
+
+        if distancia > self.DISTANCIA_MAXIMA_VALIDA:
+            return None
+
+        return distancia
+
+    # -------------------------------------------------------------------------
+    def _filtrar_distancia(self, distancia_cruda):
+        """
+        Parametros:
+            distancia_cruda: distancia medida en cm o None.
+
+        Hace:
+            Reduce saltos del ultrasonico usando historial y mediana.
+            Esto evita que el estado de LEDs cambie por ruido de una lectura.
+
+        Devuelve:
+            Distancia filtrada en cm o None.
+        """
+
+        if distancia_cruda is None:
+            return self._ultrasonico_distancia_filtrada
+
+        if self._ultrasonico_distancia_filtrada is not None:
+            diferencia = abs(distancia_cruda - self._ultrasonico_distancia_filtrada)
+            if diferencia > self.CAMBIO_ULTRASONICO_MAXIMO_CM:
+                # Se ignora un salto demasiado grande porque suele ser ruido.
+                return self._ultrasonico_distancia_filtrada
+
+        self._historial_ultrasonico.append(distancia_cruda)
+        if len(self._historial_ultrasonico) > self.MUESTRAS_ULTRASONICO:
+            self._historial_ultrasonico.pop(0)
+
+        ordenadas = sorted(self._historial_ultrasonico)
+        mediana = ordenadas[len(ordenadas) // 2]
+
+        if self._ultrasonico_distancia_filtrada is None:
+            self._ultrasonico_distancia_filtrada = mediana
         else:
-            distancia = (duracion * 0.0343) / 2
+            self._ultrasonico_distancia_filtrada = (
+                self._ultrasonico_distancia_filtrada * 0.65 + mediana * 0.35
+            )
+
+        return self._ultrasonico_distancia_filtrada
+
+    # -------------------------------------------------------------------------
+    def leer_distancia(self):
+        """
+        Parametros:
+            Ninguno.
+
+        Hace:
+            Lee el sensor ultrasonico y calcula distancia en cm.
+            La salida ya va filtrada para evitar parpadeos de LEDs.
+
+        Devuelve:
+            Distancia en centimetros.
+            None si no hay lectura valida inicial.
+        """
+
+        actual = utime.ticks_ms()
+
+        if utime.ticks_diff(actual, self._ultrasonico_ultima_medida) < ULTRASONICO_TIEMPO_ESPERA_MS:
+            return self._ultrasonico_ultima_distancia
+
+        distancia_cruda = self._leer_distancia_cruda()
+        distancia = self._filtrar_distancia(distancia_cruda)
 
         self._ultrasonico_ultima_medida = actual
         self._ultrasonico_ultima_distancia = distancia
@@ -147,13 +232,10 @@ class CajaSensores:
         return distancia
 
     # -------------------------------------------------------------------------
-    def leer_joystick_base(self):
+    def _leer_joystick_crudo(self):
         """
-        Parametros:
-            Ninguno.
-
         Hace:
-            Lee el eje VRx del joystick de la base.
+            Lee directamente el ADC del joystick.
 
         Devuelve:
             Valor analogico de 0 a 4095.
@@ -162,27 +244,125 @@ class CajaSensores:
         return self._joystick_base_x.read()
 
     # -------------------------------------------------------------------------
+    def _calibrar_joystick_base(self):
+        """
+        Hace:
+            Obtiene el centro real del joystick al iniciar.
+            Es importante no tocar el joystick durante el arranque.
+
+        Devuelve:
+            Valor central calibrado.
+        """
+
+        total = 0
+        lecturas_validas = 0
+
+        for _ in range(self.MUESTRAS_CALIBRACION_JOYSTICK):
+            valor = self._leer_joystick_crudo()
+            if 0 <= valor <= 4095:
+                total += valor
+                lecturas_validas += 1
+            utime.sleep_ms(5)
+
+        if lecturas_validas == 0:
+            return self.JOYSTICK_CENTRO_DEFECTO
+
+        centro = int(total / lecturas_validas)
+
+        # Si el centro cae demasiado cerca de los extremos, probablemente
+        # el joystick esta mal conectado o se estaba tocando al encender.
+        if centro < 350 or centro > 3745:
+            return self.JOYSTICK_CENTRO_DEFECTO
+
+        return centro
+
+    # -------------------------------------------------------------------------
+    def leer_joystick_base(self):
+        """
+        Parametros:
+            Ninguno.
+
+        Hace:
+            Lee el eje VRx del joystick de la base y aplica promedio movil.
+
+        Devuelve:
+            Valor analogico filtrado de 0 a 4095.
+        """
+
+        valor = self._leer_joystick_crudo()
+
+        self._historial_joystick.append(valor)
+        if len(self._historial_joystick) > self.MUESTRAS_JOYSTICK:
+            self._historial_joystick.pop(0)
+
+        return int(sum(self._historial_joystick) / len(self._historial_joystick))
+
+    # -------------------------------------------------------------------------
+    def _direccion_joystick_instantanea(self, valor):
+        """
+        Parametros:
+            valor: lectura analogica filtrada.
+
+        Hace:
+            Convierte el valor del joystick en direccion usando centro calibrado,
+            zona muerta e histeresis de reingreso al centro.
+
+        Devuelve:
+            DERECHA, IZQUIERDA o CENTRO.
+        """
+
+        diferencia = valor - self._joystick_centro
+
+        if self._joystick_direccion_estable == "DERECHA":
+            if diferencia > self.JOYSTICK_ZONA_REINGRESO:
+                return "DERECHA"
+            return "CENTRO"
+
+        if self._joystick_direccion_estable == "IZQUIERDA":
+            if diferencia < -self.JOYSTICK_ZONA_REINGRESO:
+                return "IZQUIERDA"
+            return "CENTRO"
+
+        if diferencia > self.JOYSTICK_ZONA_MUERTA:
+            return "DERECHA"
+
+        if diferencia < -self.JOYSTICK_ZONA_MUERTA:
+            return "IZQUIERDA"
+
+        return "CENTRO"
+
+    # -------------------------------------------------------------------------
     def obtener_direccion_joystick_base(self):
         """
         Parametros:
             Ninguno.
 
         Hace:
-            Convierte el valor analogico del joystick en direccion.
+            Convierte el valor analogico del joystick en direccion estable.
 
         Devuelve:
             DERECHA, IZQUIERDA o CENTRO.
         """
 
         valor = self.leer_joystick_base()
+        direccion = self._direccion_joystick_instantanea(valor)
 
-        if valor > self.LIMITE_JOYSTICK_ALTO:
-            return "DERECHA"
+        if direccion == self._joystick_direccion_estable:
+            self._joystick_direccion_candidata = direccion
+            self._joystick_conteo_candidata = 0
+            return self._joystick_direccion_estable
 
-        if valor < self.LIMITE_JOYSTICK_BAJO:
-            return "IZQUIERDA"
+        if direccion == self._joystick_direccion_candidata:
+            self._joystick_conteo_candidata += 1
+        else:
+            self._joystick_direccion_candidata = direccion
+            self._joystick_conteo_candidata = 1
 
-        return "CENTRO"
+        if self._joystick_conteo_candidata >= self.JOYSTICK_CONFIRMACIONES:
+            self._joystick_direccion_estable = direccion
+            self._joystick_conteo_candidata = 0
+
+        return self._joystick_direccion_estable
 
     # -------------------------------------------------------------------------
     def obtener_joystick_base_interpretado(self):
@@ -191,24 +371,33 @@ class CajaSensores:
             Ninguno.
 
         Hace:
-            Lee el joystick y devuelve valor crudo mas direccion.
+            Lee el joystick y devuelve valor crudo mas direccion estable.
 
         Devuelve:
-            Diccionario con valor y direccion.
+            Diccionario con valor, direccion y centro calibrado.
         """
 
         valor = self.leer_joystick_base()
+        direccion = self._direccion_joystick_instantanea(valor)
 
-        if valor > self.LIMITE_JOYSTICK_ALTO:
-            direccion = "DERECHA"
-        elif valor < self.LIMITE_JOYSTICK_BAJO:
-            direccion = "IZQUIERDA"
+        if direccion == self._joystick_direccion_estable:
+            self._joystick_direccion_candidata = direccion
+            self._joystick_conteo_candidata = 0
         else:
-            direccion = "CENTRO"
+            if direccion == self._joystick_direccion_candidata:
+                self._joystick_conteo_candidata += 1
+            else:
+                self._joystick_direccion_candidata = direccion
+                self._joystick_conteo_candidata = 1
+
+            if self._joystick_conteo_candidata >= self.JOYSTICK_CONFIRMACIONES:
+                self._joystick_direccion_estable = direccion
+                self._joystick_conteo_candidata = 0
 
         return {
             "valor": valor,
-            "direccion": direccion
+            "direccion": self._joystick_direccion_estable,
+            "centro": self._joystick_centro
         }
 
     # -------------------------------------------------------------------------
@@ -221,7 +410,7 @@ class CajaSensores:
             Lee todos los sensores necesarios para el ciclo principal.
 
         Devuelve:
-            Diccionario con presencia, distancia, joystick y direccion.
+            Diccionario con presencia, distancia, joystick, centro y direccion.
         """
 
         joystick = self.obtener_joystick_base_interpretado()
@@ -232,6 +421,7 @@ class CajaSensores:
             "presencia": presencia,
             "distancia_cm": distancia,
             "joystick_base": joystick["valor"],
+            "joystick_centro": joystick["centro"],
             "direccion_base": joystick["direccion"]
         }
 
@@ -283,6 +473,7 @@ class CajaActuadores:
 
         self._angulo_base = 90
         self._angulo_brazo = 90
+        self._led_actual = "APAGADO"
 
         if centrar_servos:
             self.mover_base(self._angulo_base)
@@ -358,7 +549,8 @@ class CajaActuadores:
             maximo: angulo maximo.
 
         Hace:
-            Mueve la base de forma incremental, como en la prueba de Thonny.
+            Mueve la base de forma incremental.
+            Si la direccion es CENTRO, conserva el angulo actual.
 
         Devuelve:
             Angulo actual de la base.
@@ -385,24 +577,28 @@ class CajaActuadores:
             invertir: invierte el sentido del servo.
 
         Hace:
-            Usa directamente los limites 2500 y 1700 de la prueba de Thonny.
+            Mantiene compatibilidad con versiones anteriores. Para el proyecto
+            actual se recomienda mover con mover_base_por_direccion usando la
+            direccion filtrada por CajaSensores.
 
         Devuelve:
             Angulo actual de la base.
         """
 
-        if not invertir:
-            if valor_joystick > 2500:
-                self.mover_base_por_direccion("DERECHA", paso, minimo, maximo)
-            elif valor_joystick < 1700:
-                self.mover_base_por_direccion("IZQUIERDA", paso, minimo, maximo)
-        else:
-            if valor_joystick > 2500:
-                self.mover_base_por_direccion("IZQUIERDA", paso, minimo, maximo)
-            elif valor_joystick < 1700:
-                self.mover_base_por_direccion("DERECHA", paso, minimo, maximo)
+        direccion = "CENTRO"
 
-        return self._angulo_base
+        if valor_joystick > 3000:
+            direccion = "DERECHA"
+        elif valor_joystick < 1100:
+            direccion = "IZQUIERDA"
+
+        if invertir:
+            if direccion == "DERECHA":
+                direccion = "IZQUIERDA"
+            elif direccion == "IZQUIERDA":
+                direccion = "DERECHA"
+
+        return self.mover_base_por_direccion(direccion, paso, minimo, maximo)
 
     # -------------------------------------------------------------------------
     def obtener_posicion_base(self):
@@ -456,10 +652,13 @@ class CajaActuadores:
 
         if led == "ROJO":
             self._led_rojo.value(1)
+            self._led_actual = "ROJO"
         elif led == "AMARILLO":
             self._led_amarillo.value(1)
+            self._led_actual = "AMARILLO"
         elif led == "AZUL":
             self._led_azul.value(1)
+            self._led_actual = "AZUL"
 
     # -------------------------------------------------------------------------
     def apagar_led(self, led):
@@ -478,6 +677,9 @@ class CajaActuadores:
         elif led == "AZUL":
             self._led_azul.value(0)
 
+        if self._led_actual == led:
+            self._led_actual = "APAGADO"
+
     # -------------------------------------------------------------------------
     def apagar_leds(self):
         """
@@ -488,6 +690,7 @@ class CajaActuadores:
         self._led_rojo.value(0)
         self._led_amarillo.value(0)
         self._led_azul.value(0)
+        self._led_actual = "APAGADO"
 
     # -------------------------------------------------------------------------
     def encender_solo_led(self, led):
@@ -497,7 +700,11 @@ class CajaActuadores:
 
         Hace:
             Apaga todos los LEDs y enciende solo uno.
+            Si ese LED ya esta encendido, no vuelve a apagar/encender.
         """
+
+        if self._led_actual == led:
+            return
 
         self.apagar_leds()
         self.encender_led(led)
@@ -538,7 +745,7 @@ class CajaActuadores:
         Hace:
             Control no bloqueante del buzzer:
             - ROJO: rapido.
-            - AMARILLO o SIN_LECTURA: lento.
+            - AMARILLO o SIN_LECTURA: lento y suave.
             - AZUL: apagado.
         """
 
@@ -554,7 +761,7 @@ class CajaActuadores:
         elif estado == "AMARILLO" or estado == "SIN_LECTURA":
             if tiempo % 1300 < 100:
                 self._buzzer.freq(900)
-                self._buzzer.duty(250)
+                self._buzzer.duty(220)
             else:
                 self._buzzer.duty(0)
 
@@ -614,6 +821,4 @@ class CajaActuadores:
 
 SensorBox = CajaSensores
 ActuatorBox = CajaActuadores
-
-
 

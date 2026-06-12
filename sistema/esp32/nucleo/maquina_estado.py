@@ -73,6 +73,14 @@ class MaquinaEstado:
         self.DISTANCIA_IDEAL_MAX = 20
         self.CAMBIO_MAXIMO_PERMITIDO = 6
 
+        # Histeresis para evitar parpadeos por ruido del ultrasonico.
+        self.MARGEN_SALIDA_ROJO_CM = 2
+        self.MARGEN_SALIDA_AZUL_CM = 2
+        self.LECTURAS_CONFIRMAR_ESTADO = 3
+        self._estado_sensores_estable = "AMARILLO"
+        self._estado_sensores_candidato = "AMARILLO"
+        self._conteo_estado_sensores = 0
+
         # Joystick/base.
         self.INVERTIR_BASE = False
 
@@ -142,7 +150,12 @@ class MaquinaEstado:
             return
 
         self._publicar_estado("Esperando instrucciones")
-        self._publicar_datos_sensores()
+
+        # En espera no se permite que PIR/ultrasonico controlen LEDs.
+        # El joystick si puede mover la base para ajustar la camara/garra.
+        resumen = self._sensores.obtener_resumen()
+        self._actualizar_servo_por_joystick(resumen)
+        self._publicar_datos_sensores(resumen=resumen)
 
         # Si la IA esta activa, los sensores no controlan LEDs/buzzer.
         # Solo se mantiene el resultado fisico de IA.
@@ -179,15 +192,8 @@ class MaquinaEstado:
         self._publicar_estado("Operando")
         resumen = self._sensores.obtener_resumen()
 
-        # El joystick puede seguir moviendo la base cuando el sistema esta en ON.
-        joystick = resumen.get("joystick_base", 0)
-        self._actuadores.mover_base_desde_joystick(
-            joystick,
-            paso=1,
-            minimo=0,
-            maximo=180,
-            invertir=self.INVERTIR_BASE
-        )
+        # El joystick mueve la base, pero ya viene filtrado por la HAL.
+        self._actualizar_servo_por_joystick(resumen)
 
         if self.modo_sistema == "sensores":
             estado_fisico, cambio, movimiento_usuario = self._calcular_estado_sensores(resumen)
@@ -328,6 +334,75 @@ class MaquinaEstado:
         self._publicar(comms.T_ALERTA_ULTIMA, "Sistema en espera")
 
     # ---------------------------------------------------------------------
+    def _clasificar_distancia_con_histeresis(self, distancia):
+        """
+        Parametros:
+            distancia: distancia filtrada en centimetros.
+
+        Hace:
+            Clasifica la distancia usando zonas normales y margen de salida.
+            El margen evita alternar rapidamente entre AZUL y AMARILLO o
+            entre ROJO y AMARILLO cuando la lectura cae cerca del limite.
+
+        Devuelve:
+            ROJO, AZUL o AMARILLO.
+        """
+
+        if distancia is None or distancia <= 0:
+            return "AMARILLO"
+
+        estado_actual = self._estado_sensores_estable
+
+        if estado_actual == "ROJO":
+            if distancia <= self.DISTANCIA_MUY_CERCA + self.MARGEN_SALIDA_ROJO_CM:
+                return "ROJO"
+
+        if estado_actual == "AZUL":
+            minimo_salida = self.DISTANCIA_IDEAL_MIN - self.MARGEN_SALIDA_AZUL_CM
+            maximo_salida = self.DISTANCIA_IDEAL_MAX + self.MARGEN_SALIDA_AZUL_CM
+            if minimo_salida <= distancia <= maximo_salida:
+                return "AZUL"
+
+        if distancia <= self.DISTANCIA_MUY_CERCA:
+            return "ROJO"
+
+        if self.DISTANCIA_IDEAL_MIN <= distancia <= self.DISTANCIA_IDEAL_MAX:
+            return "AZUL"
+
+        return "AMARILLO"
+
+    # ---------------------------------------------------------------------
+    def _confirmar_estado_sensores(self, candidato):
+        """
+        Parametros:
+            candidato: color calculado por la distancia.
+
+        Hace:
+            Confirma el cambio de LED solo despues de varias lecturas iguales.
+            Esto evita que un valor suelto del ultrasonico cambie el LED.
+
+        Devuelve:
+            Estado estable confirmado.
+        """
+
+        if candidato == self._estado_sensores_estable:
+            self._estado_sensores_candidato = candidato
+            self._conteo_estado_sensores = 0
+            return self._estado_sensores_estable
+
+        if candidato == self._estado_sensores_candidato:
+            self._conteo_estado_sensores += 1
+        else:
+            self._estado_sensores_candidato = candidato
+            self._conteo_estado_sensores = 1
+
+        if self._conteo_estado_sensores >= self.LECTURAS_CONFIRMAR_ESTADO:
+            self._estado_sensores_estable = candidato
+            self._conteo_estado_sensores = 0
+
+        return self._estado_sensores_estable
+
+    # ---------------------------------------------------------------------
     def _calcular_estado_sensores(self, resumen):
         """
         Parametros:
@@ -341,6 +416,7 @@ class MaquinaEstado:
             - distancia de 11 a 14 cm: AMARILLO para pedir ajuste.
 
             El PIR solo se reporta como movimiento true/false; no decide LED.
+            El cambio de LED se confirma con histeresis para evitar parpadeos.
 
         Devuelve:
             estado_fisico, cambio_distancia, movimiento_usuario.
@@ -361,17 +437,11 @@ class MaquinaEstado:
         self._ultimo_cambio_distancia = cambio
         movimiento_usuario = pir_detectado
 
-        if distancia is None or distancia <= 0:
-            estado_fisico = "AMARILLO"
-        elif distancia <= self.DISTANCIA_MUY_CERCA:
-            estado_fisico = "ROJO"
-        elif self.DISTANCIA_IDEAL_MIN <= distancia <= self.DISTANCIA_IDEAL_MAX:
-            estado_fisico = "AZUL"
-        else:
-            estado_fisico = "AMARILLO"
+        candidato = self._clasificar_distancia_con_histeresis(distancia)
+        estado_fisico = self._confirmar_estado_sensores(candidato)
 
         self._movimiento_usuario = movimiento_usuario
-        print("Modo sensores:", estado_fisico, "| Distancia:", distancia, "| Cambio:", round(cambio, 1), "| PIR:", pir_detectado)
+        print("Modo sensores:", estado_fisico, "| Candidato:", candidato, "| Distancia:", distancia, "| Cambio:", round(cambio, 1), "| PIR:", pir_detectado)
         return estado_fisico, cambio, movimiento_usuario
 
     # ---------------------------------------------------------------------
@@ -379,7 +449,7 @@ class MaquinaEstado:
         """
         Hace:
             Actualiza LEDs y buzzer de forma no bloqueante.
-            Siempre apaga los otros LEDs antes de encender el color activo.
+            Solo cambia de LED cuando cambia el estado, para evitar parpadeos.
         """
 
         if self._actuadores is None:
@@ -387,22 +457,57 @@ class MaquinaEstado:
 
         try:
             if self._estado_salida == "APAGADO":
-                self._actuadores.estado_seguro()
-                self._ultimo_estado_salida = self._estado_salida
+                if self._ultimo_estado_salida != "APAGADO":
+                    self._actuadores.estado_seguro()
+                self._ultimo_estado_salida = "APAGADO"
                 return
 
-            if self._estado_salida == "ROJO":
-                self._actuadores.encender_solo_led("ROJO")
-            elif self._estado_salida == "AZUL":
-                self._actuadores.encender_solo_led("AZUL")
-            else:
-                self._actuadores.encender_solo_led("AMARILLO")
+            if self._estado_salida != self._ultimo_estado_salida:
+                if self._estado_salida == "ROJO":
+                    self._actuadores.encender_solo_led("ROJO")
+                elif self._estado_salida == "AZUL":
+                    self._actuadores.encender_solo_led("AZUL")
+                else:
+                    self._actuadores.encender_solo_led("AMARILLO")
+
+                self._ultimo_estado_salida = self._estado_salida
 
             self._actuadores.controlar_buzzer_por_estado(self._estado_salida)
-            self._ultimo_estado_salida = self._estado_salida
 
         except Exception as error:
             print("Error actualizando salida fisica:", error)
+
+    # ---------------------------------------------------------------------
+    def _actualizar_servo_por_joystick(self, resumen):
+        """
+        Parametros:
+            resumen: diccionario de CajaSensores.
+
+        Hace:
+            Mueve la base con la direccion filtrada del joystick.
+            Si el joystick esta centrado, no mueve el servomotor.
+
+        Devuelve:
+            Angulo actual de la base.
+        """
+
+        if self._actuadores is None:
+            return None
+
+        direccion = resumen.get("direccion_base", "CENTRO")
+
+        if self.INVERTIR_BASE:
+            if direccion == "DERECHA":
+                direccion = "IZQUIERDA"
+            elif direccion == "IZQUIERDA":
+                direccion = "DERECHA"
+
+        return self._actuadores.mover_base_por_direccion(
+            direccion,
+            paso=1,
+            minimo=0,
+            maximo=180
+        )
 
     # ---------------------------------------------------------------------
     def _publicar_datos_sensores(self, resumen=None, estado_fisico=None, cambio_distancia=None, movimiento_usuario=None):
@@ -425,6 +530,7 @@ class MaquinaEstado:
         distancia = resumen.get("distancia_cm", resumen.get("distancia", None))
         joystick = resumen.get("joystick_base", 0)
         direccion = resumen.get("direccion_base", "CENTRO")
+        centro_joystick = resumen.get("joystick_centro", "")
 
         if movimiento_usuario is None:
             movimiento_usuario = self._movimiento_usuario
@@ -460,6 +566,7 @@ class MaquinaEstado:
             "| Cambio:", round(cambio_distancia, 1),
             "| Estado fisico:", estado_fisico,
             "| Joystick:", joystick,
+            "| Centro:", centro_joystick,
             "| Direccion:", direccion,
             "| Base:", angulo_base
         )
@@ -479,6 +586,9 @@ class MaquinaEstado:
             self._estado_salida = "APAGADO"
             self._ultimo_estado_salida = None
             self._distancia_anterior = None
+            self._estado_sensores_estable = "AMARILLO"
+            self._estado_sensores_candidato = "AMARILLO"
+            self._conteo_estado_sensores = 0
             self.transicion(ESTADO_OPERANDO)
             self._publicar_estado("Operando")
             self._publicar(comms.T_ALERTA_ULTIMA, "Modo sensores activo")
@@ -489,6 +599,9 @@ class MaquinaEstado:
             self._estado_salida = "APAGADO"
             self._ultimo_estado_salida = None
             self._distancia_anterior = None
+            self._estado_sensores_estable = "AMARILLO"
+            self._estado_sensores_candidato = "AMARILLO"
+            self._conteo_estado_sensores = 0
 
             if self._actuadores is not None:
                 self._actuadores.estado_seguro()
@@ -659,8 +772,12 @@ class MaquinaEstado:
     def _procesar_comando_led_parpadear(self, mensaje):
         """
         Hace:
-            Parpadea un LED por JSON.
+            Parpadea un LED por JSON solo en reposo.
         """
+
+        if self.modo_sistema != "reposo":
+            print("Parpadeo de LED ignorado. Modo activo:", self.modo_sistema)
+            return
 
         try:
             datos = ujson.loads(mensaje)
@@ -676,8 +793,12 @@ class MaquinaEstado:
     def _procesar_comando_buzzer(self, mensaje):
         """
         Hace:
-            Ejecuta senales de buzzer.
+            Ejecuta senales de buzzer solo en reposo.
         """
+
+        if self.modo_sistema != "reposo":
+            print("Comando de buzzer ignorado. Modo activo:", self.modo_sistema)
+            return
 
         mensaje = mensaje.lower()
 
@@ -809,4 +930,5 @@ class MaquinaEstado:
             return dato.decode("utf-8")
 
         return str(dato)
+
 
