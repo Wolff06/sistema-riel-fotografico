@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 # =============================================================================
 # PROYECTO: CANMA - Garra Robotica con Camara e IA
 # ARCHIVO: sistema/esp32/nucleo/maquina_estado.py
@@ -930,5 +930,3 @@ class MaquinaEstado:
             return dato.decode("utf-8")
 
         return str(dato)
-
-

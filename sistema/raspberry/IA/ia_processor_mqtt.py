@@ -2,6 +2,12 @@
 # PROYECTO: CANMA - Garra Robotica con Camara e IA
 # ARCHIVO: sistema/raspberry/IA/ia_processor_mqtt.py
 #
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
+#
 # OBJETIVO:
 # Ejecutar YOLO en Raspberry/servidor externo, activarse por MQTT y publicar
 # resultado procesable para ESP32, interfaz y Firebase.
@@ -45,6 +51,12 @@ BROKER_USER = "admin"
 BROKER_PASS = "123"
 
 CAMARA_ID = 0
+# Fuente de camara para IA.
+# Para esta entrega, la Raspberry Pi funciona como modulo de camara valido.
+# Si no se define la variable de entorno CANMA_CAMARA_FUENTE, se usa CAMARA_ID=0
+# y la logica actual de la Raspberry no cambia.
+# Tambien se permite una camara IP o ESP32-CAM por URL si el equipo la conecta.
+CAMARA_FUENTE_ENTORNO = os.environ.get("CANMA_CAMARA_FUENTE", "").strip()
 CONFIANZA_MINIMA = 0.45
 INTERVALO_PUBLICACION = 2.0
 MOSTRAR_VENTANA = True
@@ -296,20 +308,43 @@ def validar_modelo():
         raise FileNotFoundError("Modelo YOLO no encontrado")
 
 
+def obtener_fuente_camara():
+    """
+    Hace:
+        Obtiene la fuente de video que usara OpenCV. Por defecto se mantiene
+        CAMARA_ID = 0 para no afectar la logica actual en Raspberry.
+        Opcionalmente permite usar una ESP32-CAM con stream HTTP/MJPEG mediante
+        la variable de entorno CANMA_CAMARA_FUENTE.
+
+    Devuelve:
+        Entero para camara local o texto con URL de camara IP/ESP32-CAM.
+    """
+
+    if CAMARA_FUENTE_ENTORNO == "":
+        return CAMARA_ID
+
+    try:
+        return int(CAMARA_FUENTE_ENTORNO)
+    except ValueError:
+        return CAMARA_FUENTE_ENTORNO
+
+
 def abrir_camara():
     """
     Hace:
-        Abre camara OpenCV.
+        Abre camara OpenCV. Si se define CANMA_CAMARA_FUENTE, puede abrir una
+        camara ESP32-CAM por URL sin modificar el flujo MQTT ya existente.
     """
 
-    camara = cv2.VideoCapture(CAMARA_ID)
+    fuente = obtener_fuente_camara()
+    camara = cv2.VideoCapture(fuente)
 
     if not camara.isOpened():
-        print("No se pudo abrir la camara con indice:", CAMARA_ID)
+        print("No se pudo abrir la camara con fuente:", fuente)
         print("La IA seguira viva en MQTT, pero publicara sin lectura.")
         return None
 
-    print("Camara abierta correctamente")
+    print("Camara abierta correctamente. Fuente:", fuente)
     return camara
 
 
