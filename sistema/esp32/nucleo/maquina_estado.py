@@ -3,6 +3,11 @@
 # PROYECTO: CANMA - Garra Robotica con Camara e IA
 # ARCHIVO: sistema/esp32/nucleo/maquina_estado.py
 #
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
 # OBJETIVO:
 # Gestionar WiFi, MQTT, sensores, actuadores y modo IA usando la HAL.
 # Este archivo NO usa Pin, PWM ni ADC directamente.
