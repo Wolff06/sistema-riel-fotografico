@@ -1,5 +1,10 @@
 # =============================================================================
 # PROYECTO: CANMA - Garra Robótica con Cámara e IA
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
 #
 # OBJETIVO:
 # Exponer en un solo punto las funciones, clases, configuración y tópicos
