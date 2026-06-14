@@ -3,6 +3,11 @@
 # PROYECTO: CANMA - Garra Robotica con Camara e IA
 # ARCHIVO: sistema/raspberry/interfaz/modelo_pantalla.py
 #
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
 # OBJETIVO:
 # Controlar la camara de la Raspberry, mostrar video en la interfaz Tkinter,
 # aplicar filtros, grabar video, extraer frames y ejecutar la IA en la Raspberry.
