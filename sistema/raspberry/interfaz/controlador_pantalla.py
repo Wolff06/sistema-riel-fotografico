@@ -2,6 +2,10 @@
 # =============================================================================
 # PROYECTO: CANMA - Garra Robotica con Camara e IA
 # ARCHIVO: sistema/raspberry/interfaz/controlador_pantalla.py
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
 #
 # OBJETIVO:
 # Conectar botones de la interfaz con camara, filtros, grabacion e IA.
