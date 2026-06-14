@@ -1,7 +1,12 @@
 
 # =============================================================================
 # PROYECTO: CANMA - Garra Robotica con Camara e IA
-# INTEGRANTES: Escribir aqui los nombres de los integrantes del equipo
+#
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
 # ARCHIVO: sistema/esp32/hardware/__init__.py
 #
 # DESCRIPCION:
