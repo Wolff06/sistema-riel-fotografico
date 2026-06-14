@@ -1,4 +1,16 @@
+# =============================================================================
+# PROYECTO: PROYECTO: CANMA - Garra Robotica con Camara e IA
+
+# - OBJETIVO DEL CODIGO -
+# Conectar la ESP32 a una red WiFi y verificar si la conexión sigue activa
 #
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
+
+# =============================================================================
 
 import network
 import time
