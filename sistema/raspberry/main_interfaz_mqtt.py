@@ -4,6 +4,12 @@
 # ARCHIVO:
 # sistema/raspberry/main_interfaz_mqtt.py
 #
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
+#
 # OBJETIVO:
 # Ejecutar la interfaz gráfica de Raspberry conectada al broker Mosquitto.
 # Este archivo une la arquitectura MVC de la interfaz con el puente MQTT.
