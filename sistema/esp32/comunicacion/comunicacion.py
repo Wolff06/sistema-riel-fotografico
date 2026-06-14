@@ -2,6 +2,11 @@
 # PROYECTO: CANMA - Garra Robotica con Camara e IA
 # ARCHIVO: sistema/esp32/comunicacion/comunicacion.py
 #
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
 # OBJETIVO:
 # Definir la tabla oficial de topicos MQTT del proyecto.
 # =============================================================================
