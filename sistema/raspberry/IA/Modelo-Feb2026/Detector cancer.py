@@ -1,3 +1,17 @@
+# =============================================================================
+# PROYECTO: PROYECTO: CANMA - Garra Robotica con Camara e IA
+
+# - OBJETIVO DEL CODIGO -
+# Ejecutar un detector en vivo con YOLO usando la cámara, para analizar cada frame,  
+# identificar la clase con mayor probabilidad y mostrar visualmente el resultado con   # recuadros, porcentaje de confianza y colores de alerta.
+#
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
+# =============================================================================
+
 """
 detector_cancer.py
 ──────────────────
