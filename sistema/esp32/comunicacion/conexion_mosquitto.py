@@ -1,3 +1,23 @@
+# =============================================================================
+# PROYECTO: PROYECTO: CANMA - Garra Robotica con Camara e IA
+
+# - OBJETIVO DEL CODIGO -
+# Este código tiene como objetivo encapsular la comunicación MQTT de 
+# la ESP32 mediante una clase llamada MQTTLink. Su función es establecer
+# conexión con el broker, publicar mensajes, suscribirse a tópicos y revisar 
+# comandos entrantes. Gracias a esta clase, la lógica principal del sistema 
+# no necesita manejar directamente todos los detalles de MQTT, sino 
+# que utiliza métodos simples como publicar(), suscribir() y checar_mensajes().
+#
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
+
+# =============================================================================
+
+
 import machine
 import ubinascii
 from umqtt.simple import MQTTClient
