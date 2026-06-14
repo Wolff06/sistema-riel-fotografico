@@ -2,6 +2,12 @@
 # PROYECTO: CANMA - Garra Robotica con Camara e IA
 # ARCHIVO: sistema/raspberry/comunicacion/mqtt_bridge.py
 #
+# - INTREGANTES -
+# Macias Campos Ariadne Lizett
+# Soto Garnica Ari Adair
+# Lira Gamiño Luis Fernando
+#
+#
 # OBJETIVO:
 # Conectar la interfaz con Mosquitto. Recibe datos del ESP32 y de la IA,
 # actualiza Tkinter y publica comandos hacia ESP32/IA.
